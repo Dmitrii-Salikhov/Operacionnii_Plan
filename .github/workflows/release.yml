@@ -3,7 +3,10 @@ name: Release
 on:
   push:
     tags:
-      - 'v*'   # Запускать при пуше тега, начинающегося с 'v', например v1.0.0
+      - 'v*'
+
+permissions:
+  contents: write
 
 jobs:
   build-and-release:
