@@ -67,7 +67,7 @@ class App(tk.Tk):
     def __init__(self):
         super().__init__()
         self.title("План операций ЛОР-отделения")
-        self.geometry("650x800")
+        self.geometry("650x750")
         self.resizable(True, True)
 
         self.file_logger = logging.getLogger('plan_generator')
@@ -90,6 +90,14 @@ class App(tk.Tk):
 
         self.status_text = tk.StringVar(value="Выберите источник данных и нажмите «Сформировать план»")
 
+        # === Чтение текущей версии из файла ===
+        try:
+            with open('version.txt', 'r', encoding='utf-8') as vf:
+                self.current_version = vf.read().strip()
+        except Exception:
+            self.current_version = "?.?.?"
+        # =====================================
+
         style = ttk.Style(self)
         style.theme_use('clam')
         style.configure('Action.TButton', font=('Segoe UI', 10), padding=6)
@@ -98,6 +106,17 @@ class App(tk.Tk):
 
         main_frame = tk.Frame(self, padx=12, pady=12)
         main_frame.pack(fill=tk.BOTH, expand=True)
+
+        # === Блок отображения версии ===
+        self.version_label = tk.Label(
+            main_frame,
+            text=f"Версия: {self.current_version}",
+            anchor='e',
+            fg="gray",
+            font=('Segoe UI', 8)
+        )
+        self.version_label.pack(side=tk.BOTTOM, anchor='se', pady=(0, 5))
+        # ===============================
 
         # ===== Блок 1: Google Календарь =====
         cal_frame = tk.LabelFrame(main_frame, text=" Загрузка из Google Календаря ", padx=10, pady=10,
