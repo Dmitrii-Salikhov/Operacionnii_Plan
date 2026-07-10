@@ -13,6 +13,7 @@ from patient_parser import patient_parser
 from plan_core import OperationPlanGenerator
 from google_calendar import fetch_google_calendar_events, reauthorize_google
 from constants import CONFIG_FILE, OLD_CONFIG_FILE
+from updater import check_for_updates, read_current_version   # <-- добавлен импорт
 
 def resource_path(relative_path):
     """Получить абсолютный путь к ресурсу (работает в PyInstaller и при разработке)."""
@@ -166,6 +167,11 @@ class App(tk.Tk):
                               command=self.configure_surgeons, style='Action.TButton')
         surg_btn.pack(pady=5, fill=tk.X)
 
+        # ===== НОВАЯ КНОПКА: Проверить обновления =====
+        update_btn = ttk.Button(main_frame, text=" 🔄 Проверить обновления",
+                                command=self.check_updates_action, style='Action.TButton')
+        update_btn.pack(pady=5, fill=tk.X)
+
         # ===== Блок 3: Пользовательские диагнозы =====
         diag_frame = tk.LabelFrame(main_frame, text=" Пользовательские диагнозы ", padx=10, pady=10,
                                    font=('Segoe UI', 10, 'bold'))
@@ -208,6 +214,14 @@ class App(tk.Tk):
 
         self.progress = ttk.Progressbar(main_frame, mode='indeterminate')
         self.log_message("Готов к работе. Выберите источник данных.", tag='success')
+
+    # === Новый метод для ручной проверки обновлений ===
+    def check_updates_action(self):
+        """Обработчик кнопки 'Проверить обновления'."""
+        self.log_message("Проверка обновлений...", 'info')
+        check_for_updates(self.current_version)
+        self.log_message("Проверка обновлений завершена.", 'info')
+    # =================================================
 
     def log_message(self, msg, tag='info'):
         self.log_text.insert(tk.END, msg + "\n", tag)
