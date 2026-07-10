@@ -58,7 +58,7 @@ jobs:
           pip install -r requirements.txt
 
       - name: Сборка PyInstaller
-        run: pyinstaller --name PlanOperaciy --windowed --icon=hospital.ico --hidden-import tkcalendar --hidden-import fuzzywuzzy --hidden-import googleapiclient.discovery --hidden-import google.auth.transport.requests --hidden-import google_auth_oauthlib.flow plan_generator.py
+        run: pyinstaller --name PlanOperaciy --windowed --icon=hospital.ico --add-data "version.txt;." --hidden-import tkcalendar --hidden-import fuzzywuzzy --hidden-import googleapiclient.discovery --hidden-import google.auth.transport.requests --hidden-import google_auth_oauthlib.flow plan_generator.py
 
       - name: Загрузка артефакта (собранное приложение)
         uses: actions/upload-artifact@v6
