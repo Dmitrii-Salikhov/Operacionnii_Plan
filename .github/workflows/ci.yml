@@ -1,0 +1,79 @@
+name: CI
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+jobs:
+  test-and-lint:
+    runs-on: windows-latest
+    strategy:
+      matrix:
+        python-version: [3.10]
+
+    steps:
+      - name: Checkout репозитория
+        uses: actions/checkout@v4
+
+      - name: Установка Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Установка зависимостей
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Запуск тестов (pytest)
+        run: |
+          pytest --tb=short --disable-warnings
+
+      - name: Линтер flake8
+        run: |
+          flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics
+          flake8 . --count --exit-zero --max-complexity=10 --max-line-length=127 --statistics
+
+      - name: Проверка типов mypy
+        run: |
+          mypy --ignore-missing-imports --follow-imports=skip .
+        continue-on-error: true
+
+  build:
+    needs: test-and-lint
+    runs-on: windows-latest
+    steps:
+      - name: Checkout репозитория
+        uses: actions/checkout@v4
+
+      - name: Установка Python 3.10
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Установка зависимостей
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Сборка PyInstaller
+        run: |
+          pyinstaller --name PlanOperaciy --windowed --icon=hospital.ico `
+            --add-data "credentials.json;." `
+            --add-data "surgeons.json;." `
+            --add-data "custom_diagnoses.json;." `
+            --hidden-import tkcalendar `
+            --hidden-import fuzzywuzzy `
+            --hidden-import googleapiclient.discovery `
+            --hidden-import google.auth.transport.requests `
+            --hidden-import google_auth_oauthlib.flow `
+            plan_generator.py
+
+      - name: Загрузка артефакта (собранное приложение)
+        uses: actions/upload-artifact@v4
+        with:
+          name: PlanOperaciy-Windows
+          path: dist/PlanOperaciy/
