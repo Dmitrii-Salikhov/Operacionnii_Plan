@@ -29,8 +29,7 @@ jobs:
           pip install -r requirements.txt
 
       - name: Запуск тестов (pytest)
-        run: |
-          pytest tests.py tests_extra.py tests_extra2.py --tb=short --disable-warnings
+        run: pytest tests.py tests_extra.py tests_extra2.py --tb=short --disable-warnings
 
       - name: Линтер flake8
         run: |
@@ -38,8 +37,7 @@ jobs:
           flake8 . --count --exit-zero --max-complexity=10 --max-line-length=127 --statistics
 
       - name: Проверка типов mypy
-        run: |
-          mypy --ignore-missing-imports --follow-imports=skip .
+        run: mypy --ignore-missing-imports --follow-imports=skip .
         continue-on-error: true
 
   build:
@@ -58,18 +56,11 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
-   
+
       - name: Сборка PyInstaller
-        run: |
-          pyinstaller --name PlanOperaciy --windowed --icon=hospital.png `
-            --hidden-import tkcalendar `
-            --hidden-import fuzzywuzzy `
-            --hidden-import googleapiclient.discovery `
-            --hidden-import google.auth.transport.requests `
-            --hidden-import google_auth_oauthlib.flow `
-            plan_generator.py
-     
-       - name: Загрузка артефакта (собранное приложение)
+        run: pyinstaller --name PlanOperaciy --windowed --icon=hospital.png --hidden-import tkcalendar --hidden-import fuzzywuzzy --hidden-import googleapiclient.discovery --hidden-import google.auth.transport.requests --hidden-import google_auth_oauthlib.flow plan_generator.py
+
+      - name: Загрузка артефакта (собранное приложение)
         uses: actions/upload-artifact@v4
         with:
           name: PlanOperaciy-Windows
