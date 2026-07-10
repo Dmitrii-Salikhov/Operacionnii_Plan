@@ -30,7 +30,7 @@ jobs:
 
       - name: Запуск тестов (pytest)
         run: |
-          pytest --tb=short --disable-warnings
+          pytest tests.py tests_extra.py tests_extra2.py --tb=short --disable-warnings
 
       - name: Линтер flake8
         run: |
