@@ -14,6 +14,15 @@ from plan_core import OperationPlanGenerator
 from google_calendar import fetch_google_calendar_events, reauthorize_google
 from constants import CONFIG_FILE, OLD_CONFIG_FILE
 
+def resource_path(relative_path):
+    """Получить абсолютный путь к ресурсу (работает в PyInstaller и при разработке)."""
+    try:
+        # PyInstaller создаёт временную папку и сохраняет путь в _MEIPASS
+        base_path = sys._MEIPASS
+    except Exception:
+        base_path = os.path.abspath(".")
+    return os.path.join(base_path, relative_path)
+
 def load_config():
     config = {'last_dir': '', 'last_monday': None}
     if os.path.exists(OLD_CONFIG_FILE):
@@ -90,13 +99,14 @@ class App(tk.Tk):
 
         self.status_text = tk.StringVar(value="Выберите источник данных и нажмите «Сформировать план»")
 
-        # === Чтение текущей версии из файла ===
+        # === Чтение текущей версии с использованием resource_path ===
         try:
-            with open('version.txt', 'r', encoding='utf-8') as vf:
+            version_file = resource_path('version.txt')
+            with open(version_file, 'r', encoding='utf-8') as vf:
                 self.current_version = vf.read().strip()
         except Exception:
             self.current_version = "?.?.?"
-        # =====================================
+        # ===========================================================
 
         style = ttk.Style(self)
         style.theme_use('clam')
