@@ -1,0 +1,12 @@
+pandas
+openpyxl
+tkcalendar
+fuzzywuzzy
+python-Levenshtein
+google-auth-oauthlib
+google-auth
+google-api-python-client
+pyinstaller
+pytest
+flake8
+mypy
