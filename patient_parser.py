@@ -401,7 +401,7 @@ class PatientParser:
 
     def resolve_age_defaults(self, diagnosis_raw: str, current_age: Optional[int]) -> Tuple[int, str]:
         if current_age is not None:
-            return current_age, 'л' if current_age >= 18 or current_age <= 17 else 'г'
+            return current_age, 'г' if current_age >= 18 else 'л'
         if re.search(r'(адено|ат|аден|гнм|тонзил)', diagnosis_raw, re.IGNORECASE):
             return 5, 'л'
         return 44, 'г'
