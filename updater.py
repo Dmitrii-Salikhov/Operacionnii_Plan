@@ -9,7 +9,6 @@ import urllib.request
 import subprocess
 import tkinter as tk
 from tkinter import messagebox
-import webbrowser
 
 GITHUB_REPO = "Dmitrii-Salikhov/Operacionnii_Plan"
 API_URL = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
@@ -23,7 +22,13 @@ def get_latest_version():
             tag = data.get("tag_name")
             return tag
     except Exception as e:
-        print(f"Ошибка проверки обновлений: {e}")
+        # Записываем ошибку в update.log рядом с exe
+        try:
+            base_dir = os.path.dirname(os.path.abspath(sys.argv[0]))
+            with open(os.path.join(base_dir, 'update.log'), 'a', encoding='utf-8') as f:
+                f.write(f"Ошибка проверки обновлений: {e}\n")
+        except:
+            pass
         return None
 
 def parse_version(tag):
