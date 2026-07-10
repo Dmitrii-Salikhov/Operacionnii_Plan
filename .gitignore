@@ -1,0 +1,31 @@
+# Логи
+*.log
+
+# Собранное приложение
+dist/
+build/
+*.spec
+
+# Excel-файлы с данными пациентов
+*.xlsx
+
+# Конфигурации с реальными именами
+surgeons.json
+custom_diagnoses.json
+app_config.json
+last_path.json
+
+# Файлы Google-авторизации
+credentials.json
+token.pickle
+
+# Виртуальное окружение
+env/
+plan_env/
+
+# Кэш Python
+__pycache__/
+*.pyc
+
+# Служебные файлы macOS
+.DS_Store

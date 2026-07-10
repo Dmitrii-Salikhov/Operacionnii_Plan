@@ -1,0 +1,23 @@
+:: 1. Переходим в папку проекта
+cd C:\Users\Dmitrij\Desktop\Operacionnii_Plan
+
+:: 2. Виртуальное окружение и активация
+python -m venv venv
+venv\Scripts\activate
+
+:: 3. Установка библиотек + Pillow
+pip install pandas openpyxl tkcalendar google-auth google-auth-oauthlib google-auth-httplib2 google-api-python-client pyyaml matplotlib pillow
+
+:: 4. Установка PyInstaller
+pip install pyinstaller
+
+:: 5. Конвертация PNG → ICO (одна строка Python)
+python -c "from PIL import Image; img = Image.open('hospital.png'); img.save('hospital.ico', format='ICO', sizes=[(256, 256)])"
+
+:: 6. Сборка с полученной иконкой
+pyinstaller --windowed --name "PlanOperacii" --icon=hospital.ico plan_generator.py
+
+:: 7. Копирование файлов данных
+copy surgeons.json dist\PlanOperacii\
+copy custom_diagnoses.json dist\PlanOperacii\  2>nul
+copy credentials.json dist\PlanOperacii\        2>nul
