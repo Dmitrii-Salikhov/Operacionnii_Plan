@@ -36,7 +36,7 @@ jobs:
         shell: bash
 
       - name: Создать релиз и загрузить артефакт
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           files: dist/PlanOperaciy-Windows.zip
           name: "Release ${{ github.ref_name }}"
