@@ -16,10 +16,10 @@ jobs:
 
     steps:
       - name: Checkout репозитория
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Установка Python ${{ matrix.python-version }}
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: ${{ matrix.python-version }}
 
@@ -45,10 +45,10 @@ jobs:
     runs-on: windows-latest
     steps:
       - name: Checkout репозитория
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Установка Python 3.10
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: '3.10'
 
@@ -61,7 +61,7 @@ jobs:
         run: pyinstaller --name PlanOperaciy --windowed --icon=hospital.ico --hidden-import tkcalendar --hidden-import fuzzywuzzy --hidden-import googleapiclient.discovery --hidden-import google.auth.transport.requests --hidden-import google_auth_oauthlib.flow plan_generator.py
 
       - name: Загрузка артефакта (собранное приложение)
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: PlanOperaciy-Windows
           path: dist/PlanOperaciy/
