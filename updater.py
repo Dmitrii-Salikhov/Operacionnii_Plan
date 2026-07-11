@@ -1,6 +1,5 @@
 """
 Модуль автообновления: проверка, скачивание и установка новой версии.
-Исправлено: окно прогресса закрывается при ошибке, улучшено логирование.
 """
 import json
 import os
@@ -18,19 +17,21 @@ API_URL = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
 ZIP_FILENAME = "PlanOperaciy-Windows.zip"
 
 def get_base_dir():
-    """Возвращает папку, где находится исполняемый файл."""
+    """Возвращает папку, где находится исполняемый файл (exe или .py)."""
     if getattr(sys, 'frozen', False):
         return os.path.dirname(sys.executable)
     else:
         return os.path.dirname(os.path.abspath(sys.argv[0]))
 
 def _ssl_context():
+    """Создаёт SSL-контекст без проверки сертификата (только для GitHub API)."""
     ctx = ssl.create_default_context()
     ctx.check_hostname = False
     ctx.verify_mode = ssl.CERT_NONE
     return ctx
 
 def get_latest_version():
+    """Возвращает строку с последней версией (например, 'v1.0.1') или None при ошибке."""
     try:
         req = urllib.request.Request(API_URL, headers={'User-Agent': 'PlanOperaciy-Updater'})
         with urllib.request.urlopen(req, timeout=5, context=_ssl_context()) as response:
@@ -50,6 +51,7 @@ def get_latest_version():
         return None
 
 def parse_version(tag):
+    """Преобразует тег 'v1.2.3' в кортеж чисел (1, 2, 3)."""
     if tag and tag.startswith('v'):
         parts = tag[1:].split('.')
         try:
@@ -59,6 +61,7 @@ def parse_version(tag):
     return (0, 0, 0)
 
 def read_current_version():
+    """Читает локальный файл version.txt. Возвращает строку версии."""
     try:
         version_path = os.path.join(get_base_dir(), 'version.txt')
         with open(version_path, 'r', encoding='utf-8') as f:
@@ -68,7 +71,8 @@ def read_current_version():
 
 def download_with_retries(url, dest_path, max_retries=5, timeout=60):
     """
-    Скачивает файл с повторами. Возвращает True при успехе, иначе False.
+    Скачивает файл с повторными попытками при сетевых ошибках.
+    Возвращает True в случае успеха, иначе False.
     """
     for attempt in range(1, max_retries + 1):
         try:
@@ -83,10 +87,14 @@ def download_with_retries(url, dest_path, max_retries=5, timeout=60):
                 f.write(f"Ошибка скачивания (попытка {attempt}): {e}\n")
             if attempt == max_retries:
                 return False
-            time.sleep(2 * attempt)
+            time.sleep(3 * attempt)
     return False
 
 def perform_update(app_dir):
+    """
+    Скачивает последний релизный zip, показывает окно прогресса,
+    создаёт PowerShell-скрипт для замены файлов и перезапуска.
+    """
     download_url = f"https://github.com/{GITHUB_REPO}/releases/latest/download/{ZIP_FILENAME}"
     tmp_dir = tempfile.gettempdir()
     zip_path = os.path.join(tmp_dir, ZIP_FILENAME)
@@ -101,14 +109,13 @@ def perform_update(app_dir):
     progress_win.update()
 
     if not download_with_retries(download_url, zip_path):
-        # Закрываем окно прогресса, если загрузка не удалась
         progress_win.destroy()
         messagebox.showerror("Ошибка обновления",
                              "Не удалось скачать обновление после нескольких попыток.\n"
                              "Проверьте интернет-соединение и повторите позже.")
         return
 
-    # Загрузка прошла успешно, готовим PowerShell-скрипт
+    # PowerShell-скрипт с корректным завершением, распаковкой и перемещением version.txt
     ps_script = os.path.join(tmp_dir, "update_plan.ps1")
     ps_app_dir = app_dir.replace('\\', '\\\\')
     ps_zip = zip_path.replace('\\', '\\\\')
@@ -127,6 +134,10 @@ if ($proc) {{
     }}
 }}
 Expand-Archive -Path "{ps_zip}" -DestinationPath "{ps_app_dir}" -Force
+# Перемещаем version.txt из _internal в корень приложения, если он там есть
+if (Test-Path "{ps_app_dir}\\_internal\\version.txt") {{
+    Move-Item -Path "{ps_app_dir}\\_internal\\version.txt" -Destination "{ps_app_dir}\\version.txt" -Force
+}}
 Start-Process -FilePath "{ps_exe}"
 Remove-Item -Path "{ps_zip}" -Force
 """
@@ -146,6 +157,10 @@ Remove-Item -Path "{ps_zip}" -Force
     sys.exit(0)
 
 def check_for_updates(current_version_str):
+    """
+    Проверяет наличие новой версии на GitHub.
+    Если есть обновление, показывает диалог. При согласии запускает полное обновление.
+    """
     latest_tag = get_latest_version()
     if not latest_tag:
         return
