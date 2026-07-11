@@ -1,5 +1,7 @@
 """
 Модуль автообновления: проверка, скачивание и установка новой версии.
+Версия 1.0.27 – добавлено информационное окно при ручной проверке,
+устойчивое скачивание, правильное расположение version.txt.
 """
 import json
 import os
@@ -53,7 +55,6 @@ def get_latest_version():
 def parse_version(tag):
     """Преобразует тег 'v1.2.3' или '1.2.3' в кортеж чисел (1, 2, 3)."""
     if tag:
-        # Убираем ведущую 'v', если есть
         v = tag.lstrip('v')
         parts = v.split('.')
         try:
@@ -71,7 +72,11 @@ def read_current_version():
     except Exception:
         return "0.0.0"
 
-def download_with_retries(url, dest_path, max_retries=5, timeout=60):
+def download_with_retries(url, dest_path, max_retries=7, timeout=60):
+    """
+    Скачивает файл с экспоненциальной задержкой между попытками.
+    Возвращает True в случае успеха, иначе False.
+    """
     for attempt in range(1, max_retries + 1):
         try:
             req = urllib.request.Request(url, headers={'User-Agent': 'PlanOperaciy-Updater'})
@@ -82,10 +87,12 @@ def download_with_retries(url, dest_path, max_retries=5, timeout=60):
         except Exception as e:
             log_path = os.path.join(get_base_dir(), 'update.log')
             with open(log_path, 'a', encoding='utf-8') as f:
-                f.write(f"Ошибка скачивания (попытка {attempt}): {e}\n")
+                f.write(f"Ошибка скачивания (попытка {attempt}/{max_retries}): {e}\n")
             if attempt == max_retries:
                 return False
-            time.sleep(3 * attempt)
+            # Экспоненциальная задержка: 3, 6, 12, 24, ...
+            wait_seconds = 3 * (2 ** (attempt - 1))
+            time.sleep(wait_seconds)
     return False
 
 def perform_update(app_dir):
@@ -93,6 +100,7 @@ def perform_update(app_dir):
     tmp_dir = tempfile.gettempdir()
     zip_path = os.path.join(tmp_dir, ZIP_FILENAME)
 
+    # Показываем окно прогресса
     progress_win = tk.Toplevel()
     progress_win.title("Обновление")
     progress_win.geometry("300x100")
@@ -108,6 +116,7 @@ def perform_update(app_dir):
                              "Проверьте интернет-соединение и повторите позже.")
         return
 
+    # PowerShell-скрипт
     ps_script = os.path.join(tmp_dir, "update_plan.ps1")
     ps_app_dir = app_dir.replace('\\', '\\\\')
     ps_zip = zip_path.replace('\\', '\\\\')
@@ -147,13 +156,16 @@ Remove-Item -Path "{ps_zip}" -Force
 
     sys.exit(0)
 
-def check_for_updates(current_version_str):
+def check_for_updates(current_version_str, silent_if_updated=False):
     """
     Проверяет наличие новой версии на GitHub.
-    Если версии равны или локальная новее – ничего не делает.
+    При silent_if_updated=True (автоматическая проверка) не показывает окно, если версия актуальна.
+    При ручной проверке (silent_if_updated=False) всегда показывает результат.
     """
     latest_tag = get_latest_version()
     if not latest_tag:
+        if not silent_if_updated:
+            messagebox.showinfo("Проверка обновлений", "Не удалось проверить обновления.\nПроверьте интернет-соединение.")
         return
 
     latest_version = parse_version(latest_tag)
@@ -179,3 +191,5 @@ def check_for_updates(current_version_str):
     else:
         with open(log_path, 'a', encoding='utf-8') as f:
             f.write("Обновлений нет (версии равны или локальная новее).\n")
+        if not silent_if_updated:
+            messagebox.showinfo("Проверка обновлений", "У вас установлена последняя версия.")

@@ -74,6 +74,8 @@ def open_folder(path):
         subprocess.call(["xdg-open", path])
 
 class App(tk.Tk):
+    MAX_LOG_LINES = 500   # максимальное число строк в виджете лога
+
     def __init__(self):
         super().__init__()
         self.title("План операций ЛОР-отделения")
@@ -223,15 +225,28 @@ class App(tk.Tk):
         self.log_message("Проверка обновлений завершена.", 'info')
     # =================================================
 
+    def _trim_log(self):
+        """Удаляет старые строки, если их больше MAX_LOG_LINES."""
+        lines = self.log_text.get('1.0', 'end-1c').split('\n')
+        if len(lines) > self.MAX_LOG_LINES:
+            # Оставляем последние MAX_LOG_LINES строк
+            new_text = '\n'.join(lines[-self.MAX_LOG_LINES:])
+            self.log_text.delete('1.0', tk.END)
+            self.log_text.insert('1.0', new_text)
+
     def log_message(self, msg, tag='info'):
-        self.log_text.insert(tk.END, msg + "\n", tag)
-        self.log_text.see(tk.END)
+        """Добавляет сообщение с временной меткой и прокручивает лог вниз."""
+        timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        formatted_msg = f"[{timestamp}] {msg}"
+        self.log_text.insert(tk.END, formatted_msg + "\n", tag)
+        self._trim_log()
+        self.log_text.see(tk.END)   # прокрутка к последней записи
         if tag == 'error':
-            self.file_logger.error(msg)
+            self.file_logger.error(formatted_msg)
         elif tag == 'warning':
-            self.file_logger.warning(msg)
+            self.file_logger.warning(formatted_msg)
         else:
-            self.file_logger.info(msg)
+            self.file_logger.info(formatted_msg)
         self.update_idletasks()
 
     def copy_log(self, event=None):
