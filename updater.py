@@ -1,5 +1,6 @@
 """
 Модуль автообновления: проверка, скачивание и установка новой версии.
+С окном прогресса и надёжным определением путей.
 """
 import json
 import os
@@ -16,6 +17,18 @@ GITHUB_REPO = "Dmitrii-Salikhov/Operacionnii_Plan"
 API_URL = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
 ZIP_FILENAME = "PlanOperaciy-Windows.zip"
 
+def get_base_dir():
+    """
+    Возвращает папку, где находится исполняемый файл (exe или .py).
+    Работает как в PyInstaller, так и в обычном Python.
+    """
+    if getattr(sys, 'frozen', False):
+        # Запущено из собранного exe
+        return os.path.dirname(sys.executable)
+    else:
+        # Запущено как скрипт
+        return os.path.dirname(os.path.abspath(sys.argv[0]))
+
 def _ssl_context():
     """Создаёт SSL-контекст без проверки сертификата (только для GitHub API)."""
     ctx = ssl.create_default_context()
@@ -23,26 +36,26 @@ def _ssl_context():
     ctx.verify_mode = ssl.CERT_NONE
     return ctx
 
-def _log(msg):
-    """Записывает сообщение в update.log рядом с exe."""
-    try:
-        base_dir = os.path.dirname(os.path.abspath(sys.argv[0]))
-        with open(os.path.join(base_dir, 'update.log'), 'a', encoding='utf-8') as f:
-            f.write(f"{msg}\n")
-    except:
-        pass
-
 def get_latest_version():
     """Возвращает строку с последней версией (например, 'v1.0.1') или None при ошибке."""
     try:
         req = urllib.request.Request(API_URL, headers={'User-Agent': 'PlanOperaciy-Updater'})
-        with urllib.request.urlopen(req, timeout=10, context=_ssl_context()) as response:
+        with urllib.request.urlopen(req, timeout=5, context=_ssl_context()) as response:
             data = json.loads(response.read().decode())
             tag = data.get("tag_name")
-            _log(f"Получен тег: {tag}")
+            # Логируем успех
+            log_path = os.path.join(get_base_dir(), 'update.log')
+            with open(log_path, 'a', encoding='utf-8') as f:
+                f.write(f"Получен тег: {tag}\n")
             return tag
     except Exception as e:
-        _log(f"Ошибка проверки обновлений: {e}")
+        # Логируем ошибку
+        try:
+            log_path = os.path.join(get_base_dir(), 'update.log')
+            with open(log_path, 'a', encoding='utf-8') as f:
+                f.write(f"Ошибка проверки обновлений: {e}\n")
+        except:
+            pass
         return None
 
 def parse_version(tag):
@@ -58,46 +71,55 @@ def parse_version(tag):
 def read_current_version():
     """Читает локальный файл version.txt. Возвращает строку версии."""
     try:
-        base_dir = os.path.dirname(os.path.abspath(sys.argv[0]))
-        with open(os.path.join(base_dir, 'version.txt'), 'r', encoding='utf-8') as f:
+        version_path = os.path.join(get_base_dir(), 'version.txt')
+        with open(version_path, 'r', encoding='utf-8') as f:
             return f.read().strip()
     except Exception:
         return "0.0.0"
 
-def download_with_retries(url, dest_path, max_retries=5, timeout=120):
+def download_with_retries(url, dest_path, max_retries=5, timeout=60):
     """
     Скачивает файл с повторными попытками при сетевых ошибках.
     Возвращает True в случае успеха, иначе False.
     """
     for attempt in range(1, max_retries + 1):
         try:
-            _log(f"Попытка скачивания {attempt}/{max_retries}...")
             req = urllib.request.Request(url, headers={'User-Agent': 'PlanOperaciy-Updater'})
             with urllib.request.urlopen(req, timeout=timeout, context=_ssl_context()) as resp:
                 with open(dest_path, 'wb') as out_file:
                     out_file.write(resp.read())
-            _log("Скачивание успешно.")
             return True
         except Exception as e:
-            _log(f"Ошибка скачивания (попытка {attempt}): {e}")
-            if attempt < max_retries:
-                wait = 5 * attempt
-                _log(f"Ждём {wait} секунд...")
-                time.sleep(wait)
+            log_path = os.path.join(get_base_dir(), 'update.log')
+            with open(log_path, 'a', encoding='utf-8') as f:
+                f.write(f"Ошибка скачивания (попытка {attempt}): {e}\n")
+            if attempt == max_retries:
+                return False
+            time.sleep(3 * attempt)  # увеличиваем паузу
     return False
 
 def perform_update(app_dir):
     """
-    Скачивает последний релизный zip, создаёт PowerShell-скрипт для замены файлов
-    и перезапуска, запускает его и завершает текущий процесс.
+    Скачивает последний релизный zip, показывает окно прогресса,
+    создаёт PowerShell-скрипт для замены файлов и перезапуска.
     """
     download_url = f"https://github.com/{GITHUB_REPO}/releases/latest/download/{ZIP_FILENAME}"
     tmp_dir = tempfile.gettempdir()
     zip_path = os.path.join(tmp_dir, ZIP_FILENAME)
 
+    # Скачиваем с повторами
     if not download_with_retries(download_url, zip_path):
         messagebox.showerror("Ошибка обновления", "Не удалось скачать обновление после нескольких попыток.\nПроверьте интернет-соединение.")
         return
+
+    # Показываем окно прогресса
+    progress_win = tk.Toplevel()
+    progress_win.title("Обновление")
+    progress_win.geometry("300x100")
+    progress_win.resizable(False, False)
+    tk.Label(progress_win, text="Идёт обновление…\nПожалуйста, не выключайте компьютер.",
+             font=('Segoe UI', 10)).pack(expand=True, pady=15)
+    progress_win.update()
 
     # Создаём скрипт PowerShell для замены файлов и перезапуска
     ps_script = os.path.join(tmp_dir, "update_plan.ps1")
@@ -107,9 +129,13 @@ def perform_update(app_dir):
 
     commands = f"""
 Start-Sleep -Seconds 2
+# Закрываем окно прогресса и текущий процесс
 Get-Process -Name "PlanOperaciy" -ErrorAction SilentlyContinue | Stop-Process -Force
+# Распаковываем архив с заменой (плоский архив)
 Expand-Archive -Path "{ps_zip}" -DestinationPath "{ps_app_dir}" -Force
+# Запускаем новую версию
 Start-Process -FilePath "{ps_exe}"
+# Удаляем скачанный архив
 Remove-Item -Path "{ps_zip}" -Force
 """
     with open(ps_script, 'w', encoding='ascii') as f:
@@ -122,8 +148,10 @@ Remove-Item -Path "{ps_zip}" -Force
         )
     except Exception as e:
         messagebox.showerror("Ошибка обновления", f"Не удалось запустить установщик:\n{e}")
+        progress_win.destroy()
         return
 
+    # Закрываем текущее приложение
     sys.exit(0)
 
 def check_for_updates(current_version_str):
@@ -148,6 +176,6 @@ def check_for_updates(current_version_str):
             "Хотите скачать и установить обновление сейчас?"
         )
         if answer:
-            app_dir = os.path.dirname(os.path.abspath(sys.argv[0]))
+            app_dir = get_base_dir()
             perform_update(app_dir)
         root.destroy()
