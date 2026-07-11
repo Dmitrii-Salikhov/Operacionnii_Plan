@@ -10,6 +10,7 @@ import ssl
 import subprocess
 import tkinter as tk
 from tkinter import messagebox
+import time
 
 GITHUB_REPO = "Dmitrii-Salikhov/Operacionnii_Plan"
 API_URL = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
@@ -63,6 +64,33 @@ def read_current_version():
     except Exception:
         return "0.0.0"
 
+def download_with_retries(url, dest_path, max_retries=3, timeout=60):
+    """
+    Скачивает файл с повторными попытками при сетевых ошибках.
+    Возвращает True в случае успеха, иначе False.
+    """
+    for attempt in range(1, max_retries + 1):
+        try:
+            req = urllib.request.Request(url, headers={'User-Agent': 'PlanOperaciy-Updater'})
+            with urllib.request.urlopen(req, timeout=timeout, context=_ssl_context()) as resp:
+                with open(dest_path, 'wb') as out_file:
+                    out_file.write(resp.read())
+            return True
+        except Exception as e:
+            if attempt == max_retries:
+                # Логируем последнюю ошибку
+                try:
+                    base_dir = os.path.dirname(os.path.abspath(sys.argv[0]))
+                    with open(os.path.join(base_dir, 'update.log'), 'a', encoding='utf-8') as f:
+                        f.write(f"Ошибка скачивания (попытка {attempt}): {e}\n")
+                except:
+                    pass
+                return False
+            else:
+                # Ждём перед повтором
+                time.sleep(2 * attempt)
+    return False
+
 def perform_update(app_dir):
     """
     Скачивает последний релизный zip, создаёт PowerShell-скрипт для замены файлов
@@ -72,12 +100,9 @@ def perform_update(app_dir):
     tmp_dir = tempfile.gettempdir()
     zip_path = os.path.join(tmp_dir, ZIP_FILENAME)
 
-    try:
-        req = urllib.request.Request(download_url, headers={'User-Agent': 'PlanOperaciy-Updater'})
-        with urllib.request.urlopen(req, timeout=30, context=_ssl_context()) as resp, open(zip_path, 'wb') as out_file:
-            out_file.write(resp.read())
-    except Exception as e:
-        messagebox.showerror("Ошибка обновления", f"Не удалось скачать обновление:\n{e}")
+    # Скачиваем с повторами
+    if not download_with_retries(download_url, zip_path):
+        messagebox.showerror("Ошибка обновления", "Не удалось скачать обновление после нескольких попыток.\nПроверьте интернет-соединение.")
         return
 
     # Создаём скрипт PowerShell для замены файлов и перезапуска
