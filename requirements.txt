@@ -10,3 +10,4 @@ pyinstaller
 pytest
 flake8
 mypy
+certifi

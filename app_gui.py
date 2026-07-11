@@ -13,7 +13,7 @@ from patient_parser import patient_parser
 from plan_core import OperationPlanGenerator
 from google_calendar import fetch_google_calendar_events, reauthorize_google
 from constants import CONFIG_FILE, OLD_CONFIG_FILE
-from updater import check_for_updates, read_current_version   # <-- добавлен импорт
+from updater import check_for_updates, read_current_version   # <-- импорт для автообновления
 
 def resource_path(relative_path):
     """Получить абсолютный путь к ресурсу (работает в PyInstaller и при разработке)."""
@@ -99,20 +99,14 @@ class App(tk.Tk):
         self.week_end_date = None
 
         self.status_text = tk.StringVar(value="Выберите источник данных и нажмите «Сформировать план»")
-# === Чтение текущей версии (ищем рядом с exe, потом во внутренних ресурсах) ===
-try:
-    # Пробуем прочитать из папки с программой
-    base_dir = os.path.dirname(os.path.abspath(sys.argv[0]))
-    with open(os.path.join(base_dir, 'version.txt'), 'r', encoding='utf-8') as vf:
-        self.current_version = vf.read().strip()
-except Exception:
-    try:
-        # Если не получилось, ищем во внутренних ресурсах PyInstaller
-        version_file = resource_path('version.txt')
-        with open(version_file, 'r', encoding='utf-8') as vf:
-            self.current_version = vf.read().strip()
-    except Exception:
-        self.current_version = "?.?.?"
+
+        # === Чтение текущей версии с использованием resource_path ===
+        try:
+            version_file = resource_path('version.txt')
+            with open(version_file, 'r', encoding='utf-8') as vf:
+                self.current_version = vf.read().strip()
+        except Exception:
+            self.current_version = "?.?.?"
         # ===========================================================
 
         style = ttk.Style(self)
@@ -173,7 +167,7 @@ except Exception:
                               command=self.configure_surgeons, style='Action.TButton')
         surg_btn.pack(pady=5, fill=tk.X)
 
-        # ===== НОВАЯ КНОПКА: Проверить обновления =====
+        # ===== КНОПКА ПРОВЕРКИ ОБНОВЛЕНИЙ =====
         update_btn = ttk.Button(main_frame, text=" 🔄 Проверить обновления",
                                 command=self.check_updates_action, style='Action.TButton')
         update_btn.pack(pady=5, fill=tk.X)
