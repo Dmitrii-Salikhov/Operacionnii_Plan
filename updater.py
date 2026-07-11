@@ -1,6 +1,6 @@
 """
 Модуль автообновления: проверка, скачивание и установка новой версии.
-С окном прогресса и надёжным определением путей.
+С окном прогресса, надёжным перезапуском и правильным определением путей.
 """
 import json
 import os
@@ -23,10 +23,8 @@ def get_base_dir():
     Работает как в PyInstaller, так и в обычном Python.
     """
     if getattr(sys, 'frozen', False):
-        # Запущено из собранного exe
         return os.path.dirname(sys.executable)
     else:
-        # Запущено как скрипт
         return os.path.dirname(os.path.abspath(sys.argv[0]))
 
 def _ssl_context():
@@ -43,13 +41,11 @@ def get_latest_version():
         with urllib.request.urlopen(req, timeout=5, context=_ssl_context()) as response:
             data = json.loads(response.read().decode())
             tag = data.get("tag_name")
-            # Логируем успех
             log_path = os.path.join(get_base_dir(), 'update.log')
             with open(log_path, 'a', encoding='utf-8') as f:
                 f.write(f"Получен тег: {tag}\n")
             return tag
     except Exception as e:
-        # Логируем ошибку
         try:
             log_path = os.path.join(get_base_dir(), 'update.log')
             with open(log_path, 'a', encoding='utf-8') as f:
@@ -78,10 +74,6 @@ def read_current_version():
         return "0.0.0"
 
 def download_with_retries(url, dest_path, max_retries=5, timeout=60):
-    """
-    Скачивает файл с повторными попытками при сетевых ошибках.
-    Возвращает True в случае успеха, иначе False.
-    """
     for attempt in range(1, max_retries + 1):
         try:
             req = urllib.request.Request(url, headers={'User-Agent': 'PlanOperaciy-Updater'})
@@ -95,24 +87,19 @@ def download_with_retries(url, dest_path, max_retries=5, timeout=60):
                 f.write(f"Ошибка скачивания (попытка {attempt}): {e}\n")
             if attempt == max_retries:
                 return False
-            time.sleep(3 * attempt)  # увеличиваем паузу
+            time.sleep(3 * attempt)
     return False
 
 def perform_update(app_dir):
-    """
-    Скачивает последний релизный zip, показывает окно прогресса,
-    создаёт PowerShell-скрипт для замены файлов и перезапуска.
-    """
     download_url = f"https://github.com/{GITHUB_REPO}/releases/latest/download/{ZIP_FILENAME}"
     tmp_dir = tempfile.gettempdir()
     zip_path = os.path.join(tmp_dir, ZIP_FILENAME)
 
-    # Скачиваем с повторами
     if not download_with_retries(download_url, zip_path):
         messagebox.showerror("Ошибка обновления", "Не удалось скачать обновление после нескольких попыток.\nПроверьте интернет-соединение.")
         return
 
-    # Показываем окно прогресса
+    # Окно прогресса
     progress_win = tk.Toplevel()
     progress_win.title("Обновление")
     progress_win.geometry("300x100")
@@ -121,17 +108,26 @@ def perform_update(app_dir):
              font=('Segoe UI', 10)).pack(expand=True, pady=15)
     progress_win.update()
 
-    # Создаём скрипт PowerShell для замены файлов и перезапуска
+    # PowerShell-скрипт с надёжным завершением старого процесса
     ps_script = os.path.join(tmp_dir, "update_plan.ps1")
     ps_app_dir = app_dir.replace('\\', '\\\\')
     ps_zip = zip_path.replace('\\', '\\\\')
     ps_exe = os.path.join(app_dir, 'PlanOperaciy.exe').replace('\\', '\\\\')
 
     commands = f"""
-Start-Sleep -Seconds 2
-# Закрываем окно прогресса и текущий процесс
-Get-Process -Name "PlanOperaciy" -ErrorAction SilentlyContinue | Stop-Process -Force
-# Распаковываем архив с заменой (плоский архив)
+# Ждём, пока текущий процесс завершится (максимум 5 секунд)
+$timeout = 50
+$proc = Get-Process -Name "PlanOperaciy" -ErrorAction SilentlyContinue
+if ($proc) {{
+    $proc | Stop-Process -Force
+    for ($i=0; $i -lt $timeout; $i++) {{
+        if (-not (Get-Process -Name "PlanOperaciy" -ErrorAction SilentlyContinue)) {{
+            break
+        }}
+        Start-Sleep -Milliseconds 100
+    }}
+}}
+# Распаковываем архив с заменой
 Expand-Archive -Path "{ps_zip}" -DestinationPath "{ps_app_dir}" -Force
 # Запускаем новую версию
 Start-Process -FilePath "{ps_exe}"
@@ -151,14 +147,9 @@ Remove-Item -Path "{ps_zip}" -Force
         progress_win.destroy()
         return
 
-    # Закрываем текущее приложение
     sys.exit(0)
 
 def check_for_updates(current_version_str):
-    """
-    Проверяет наличие новой версии на GitHub.
-    Если есть обновление, показывает диалог. При согласии запускает полное обновление.
-    """
     latest_tag = get_latest_version()
     if not latest_tag:
         return

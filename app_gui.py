@@ -100,15 +100,15 @@ class App(tk.Tk):
 
         self.status_text = tk.StringVar(value="Выберите источник данных и нажмите «Сформировать план»")
 
-        # === Чтение текущей версии с использованием resource_path ===
+        # === Чтение текущей версии из папки с программой ===
         try:
-            version_file = resource_path('version.txt')
+            from updater import get_base_dir
+            version_file = os.path.join(get_base_dir(), 'version.txt')
             with open(version_file, 'r', encoding='utf-8') as vf:
                 self.current_version = vf.read().strip()
         except Exception:
             self.current_version = "?.?.?"
-        # ===========================================================
-
+        # =====================================================
         style = ttk.Style(self)
         style.theme_use('clam')
         style.configure('Action.TButton', font=('Segoe UI', 10), padding=6)
