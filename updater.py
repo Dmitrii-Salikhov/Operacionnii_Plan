@@ -51,9 +51,11 @@ def get_latest_version():
         return None
 
 def parse_version(tag):
-    """Преобразует тег 'v1.2.3' в кортеж чисел (1, 2, 3)."""
-    if tag and tag.startswith('v'):
-        parts = tag[1:].split('.')
+    """Преобразует тег 'v1.2.3' или '1.2.3' в кортеж чисел (1, 2, 3)."""
+    if tag:
+        # Убираем ведущую 'v', если есть
+        v = tag.lstrip('v')
+        parts = v.split('.')
         try:
             return tuple(int(p) for p in parts)
         except ValueError:
@@ -70,10 +72,6 @@ def read_current_version():
         return "0.0.0"
 
 def download_with_retries(url, dest_path, max_retries=5, timeout=60):
-    """
-    Скачивает файл с повторными попытками при сетевых ошибках.
-    Возвращает True в случае успеха, иначе False.
-    """
     for attempt in range(1, max_retries + 1):
         try:
             req = urllib.request.Request(url, headers={'User-Agent': 'PlanOperaciy-Updater'})
@@ -91,15 +89,10 @@ def download_with_retries(url, dest_path, max_retries=5, timeout=60):
     return False
 
 def perform_update(app_dir):
-    """
-    Скачивает последний релизный zip, показывает окно прогресса,
-    создаёт PowerShell-скрипт для замены файлов и перезапуска.
-    """
     download_url = f"https://github.com/{GITHUB_REPO}/releases/latest/download/{ZIP_FILENAME}"
     tmp_dir = tempfile.gettempdir()
     zip_path = os.path.join(tmp_dir, ZIP_FILENAME)
 
-    # Показываем окно прогресса
     progress_win = tk.Toplevel()
     progress_win.title("Обновление")
     progress_win.geometry("300x100")
@@ -115,7 +108,6 @@ def perform_update(app_dir):
                              "Проверьте интернет-соединение и повторите позже.")
         return
 
-    # PowerShell-скрипт с корректным завершением, распаковкой и перемещением version.txt
     ps_script = os.path.join(tmp_dir, "update_plan.ps1")
     ps_app_dir = app_dir.replace('\\', '\\\\')
     ps_zip = zip_path.replace('\\', '\\\\')
@@ -134,7 +126,6 @@ if ($proc) {{
     }}
 }}
 Expand-Archive -Path "{ps_zip}" -DestinationPath "{ps_app_dir}" -Force
-# Перемещаем version.txt из _internal в корень приложения, если он там есть
 if (Test-Path "{ps_app_dir}\\_internal\\version.txt") {{
     Move-Item -Path "{ps_app_dir}\\_internal\\version.txt" -Destination "{ps_app_dir}\\version.txt" -Force
 }}
@@ -159,7 +150,7 @@ Remove-Item -Path "{ps_zip}" -Force
 def check_for_updates(current_version_str):
     """
     Проверяет наличие новой версии на GitHub.
-    Если есть обновление, показывает диалог. При согласии запускает полное обновление.
+    Если версии равны или локальная новее – ничего не делает.
     """
     latest_tag = get_latest_version()
     if not latest_tag:
@@ -167,6 +158,10 @@ def check_for_updates(current_version_str):
 
     latest_version = parse_version(latest_tag)
     current_version = parse_version(current_version_str)
+
+    log_path = os.path.join(get_base_dir(), 'update.log')
+    with open(log_path, 'a', encoding='utf-8') as f:
+        f.write(f"Сравнение: локальная {current_version_str} ({current_version}), последняя {latest_tag} ({latest_version})\n")
 
     if latest_version > current_version:
         root = tk.Tk()
@@ -181,3 +176,6 @@ def check_for_updates(current_version_str):
             app_dir = get_base_dir()
             perform_update(app_dir)
         root.destroy()
+    else:
+        with open(log_path, 'a', encoding='utf-8') as f:
+            f.write("Обновлений нет (версии равны или локальная новее).\n")
