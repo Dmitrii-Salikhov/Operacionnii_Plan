@@ -99,14 +99,20 @@ class App(tk.Tk):
         self.week_end_date = None
 
         self.status_text = tk.StringVar(value="Выберите источник данных и нажмите «Сформировать план»")
-
-        # === Чтение текущей версии с использованием resource_path ===
-        try:
-            version_file = resource_path('version.txt')
-            with open(version_file, 'r', encoding='utf-8') as vf:
-                self.current_version = vf.read().strip()
-        except Exception:
-            self.current_version = "?.?.?"
+# === Чтение текущей версии (ищем рядом с exe, потом во внутренних ресурсах) ===
+try:
+    # Пробуем прочитать из папки с программой
+    base_dir = os.path.dirname(os.path.abspath(sys.argv[0]))
+    with open(os.path.join(base_dir, 'version.txt'), 'r', encoding='utf-8') as vf:
+        self.current_version = vf.read().strip()
+except Exception:
+    try:
+        # Если не получилось, ищем во внутренних ресурсах PyInstaller
+        version_file = resource_path('version.txt')
+        with open(version_file, 'r', encoding='utf-8') as vf:
+            self.current_version = vf.read().strip()
+    except Exception:
+        self.current_version = "?.?.?"
         # ===========================================================
 
         style = ttk.Style(self)
