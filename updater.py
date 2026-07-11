@@ -23,26 +23,26 @@ def _ssl_context():
     ctx.verify_mode = ssl.CERT_NONE
     return ctx
 
+def _log(msg):
+    """Записывает сообщение в update.log рядом с exe."""
+    try:
+        base_dir = os.path.dirname(os.path.abspath(sys.argv[0]))
+        with open(os.path.join(base_dir, 'update.log'), 'a', encoding='utf-8') as f:
+            f.write(f"{msg}\n")
+    except:
+        pass
+
 def get_latest_version():
     """Возвращает строку с последней версией (например, 'v1.0.1') или None при ошибке."""
     try:
         req = urllib.request.Request(API_URL, headers={'User-Agent': 'PlanOperaciy-Updater'})
-        with urllib.request.urlopen(req, timeout=5, context=_ssl_context()) as response:
+        with urllib.request.urlopen(req, timeout=10, context=_ssl_context()) as response:
             data = json.loads(response.read().decode())
             tag = data.get("tag_name")
-            # Логируем успех
-            base_dir = os.path.dirname(os.path.abspath(sys.argv[0]))
-            with open(os.path.join(base_dir, 'update.log'), 'a', encoding='utf-8') as f:
-                f.write(f"Получен тег: {tag}\n")
+            _log(f"Получен тег: {tag}")
             return tag
     except Exception as e:
-        # Логируем ошибку
-        try:
-            base_dir = os.path.dirname(os.path.abspath(sys.argv[0]))
-            with open(os.path.join(base_dir, 'update.log'), 'a', encoding='utf-8') as f:
-                f.write(f"Ошибка проверки обновлений: {e}\n")
-        except:
-            pass
+        _log(f"Ошибка проверки обновлений: {e}")
         return None
 
 def parse_version(tag):
@@ -64,31 +64,26 @@ def read_current_version():
     except Exception:
         return "0.0.0"
 
-def download_with_retries(url, dest_path, max_retries=3, timeout=60):
+def download_with_retries(url, dest_path, max_retries=5, timeout=120):
     """
     Скачивает файл с повторными попытками при сетевых ошибках.
     Возвращает True в случае успеха, иначе False.
     """
     for attempt in range(1, max_retries + 1):
         try:
+            _log(f"Попытка скачивания {attempt}/{max_retries}...")
             req = urllib.request.Request(url, headers={'User-Agent': 'PlanOperaciy-Updater'})
             with urllib.request.urlopen(req, timeout=timeout, context=_ssl_context()) as resp:
                 with open(dest_path, 'wb') as out_file:
                     out_file.write(resp.read())
+            _log("Скачивание успешно.")
             return True
         except Exception as e:
-            if attempt == max_retries:
-                # Логируем последнюю ошибку
-                try:
-                    base_dir = os.path.dirname(os.path.abspath(sys.argv[0]))
-                    with open(os.path.join(base_dir, 'update.log'), 'a', encoding='utf-8') as f:
-                        f.write(f"Ошибка скачивания (попытка {attempt}): {e}\n")
-                except:
-                    pass
-                return False
-            else:
-                # Ждём перед повтором
-                time.sleep(2 * attempt)
+            _log(f"Ошибка скачивания (попытка {attempt}): {e}")
+            if attempt < max_retries:
+                wait = 5 * attempt
+                _log(f"Ждём {wait} секунд...")
+                time.sleep(wait)
     return False
 
 def perform_update(app_dir):
@@ -100,7 +95,6 @@ def perform_update(app_dir):
     tmp_dir = tempfile.gettempdir()
     zip_path = os.path.join(tmp_dir, ZIP_FILENAME)
 
-    # Скачиваем с повторами
     if not download_with_retries(download_url, zip_path):
         messagebox.showerror("Ошибка обновления", "Не удалось скачать обновление после нескольких попыток.\nПроверьте интернет-соединение.")
         return
