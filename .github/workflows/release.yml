@@ -31,9 +31,9 @@ jobs:
 
       - name: Создать ZIP-архив
         run: |
-          cd dist
-          7z a PlanOperaciy-Windows.zip PlanOperaciy\*
-        shell: bash
+          cd dist\PlanOperaciy
+          7z a ..\PlanOperaciy-Windows.zip *
+        shell: cmd
 
       - name: Создать релиз и загрузить артефакт
         uses: softprops/action-gh-release@v3
