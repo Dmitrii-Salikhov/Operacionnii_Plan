@@ -7,7 +7,7 @@ import calendar_provider.google_backend as google_cal
 from google.auth.exceptions import RefreshError
 
 
-def test_refresh_failure_reauthorizes_without_network(monkeypatch):
+def test_refresh_failure_reauthorizes_without_network(tmp_path, monkeypatch):
     class ExpiredCredentials:
         valid = False
         expired = True
@@ -18,6 +18,8 @@ def test_refresh_failure_reauthorizes_without_network(monkeypatch):
 
     credentials = ExpiredCredentials()
     removed = []
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "token.pickle").write_bytes(b"token")
     monkeypatch.setattr(google_cal.os.path, "exists", lambda path: path == google_cal.TOKEN_FILE)
     monkeypatch.setattr(google_cal.pickle, "load", lambda _: credentials)
     monkeypatch.setattr(google_cal.os, "remove", lambda path: removed.append(path))
