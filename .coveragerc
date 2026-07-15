@@ -1,0 +1,14 @@
+[run]
+source = .
+omit =
+    tests/*
+    .venv/*
+    gui/*
+    app_gui.py
+    plan_generator.py
+    google_calendar.py
+
+[report]
+fail_under = 90
+show_missing = true
+skip_covered = false

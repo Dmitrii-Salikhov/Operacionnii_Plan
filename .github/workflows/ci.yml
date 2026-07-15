@@ -28,17 +28,35 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Запуск тестов (pytest)
-        run: pytest tests.py tests_extra.py tests_extra2.py --tb=short --disable-warnings
+      - name: Запуск тестов с покрытием
+        run: >
+          pytest tests/
+          --tb=short
+          --disable-warnings
+          --cov=.
+          --cov-report=term-missing
+          --cov-fail-under=90
 
-      - name: Линтер flake8
+      - name: Линтер flake8 (строгий на ядре)
         run: |
-          flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics
-          flake8 . --count --exit-zero --max-complexity=10 --max-line-length=127 --statistics
+          flake8 app_logging.py patient_parser.py plan_core.py phone_extractor.py google_calendar.py calendar_provider config_surgeons.py constants.py updater.py gui/helpers.py --count --max-line-length=127 --extend-ignore=C901 --show-source --statistics
+          flake8 gui --count --select=E9,F63,F7,F82 --show-source --statistics
 
-      - name: Проверка типов mypy
-        run: mypy --ignore-missing-imports --follow-imports=skip .
-        continue-on-error: true
+      - name: Проверка типов mypy (ядро, обязательно)
+        run: >
+          mypy
+          --ignore-missing-imports
+          --follow-imports=skip
+          app_logging.py
+          constants.py
+          phone_extractor.py
+          config_surgeons.py
+          patient_parser.py
+          plan_core.py
+          google_calendar.py
+          calendar_provider
+          updater.py
+          gui/helpers.py
 
   build:
     needs: test-and-lint
@@ -58,7 +76,7 @@ jobs:
           pip install -r requirements.txt
 
       - name: Сборка PyInstaller
-        run: pyinstaller --name PlanOperaciy --windowed --icon=hospital.ico --add-data "version.txt;." --hidden-import tkcalendar --hidden-import fuzzywuzzy --hidden-import googleapiclient.discovery --hidden-import google.auth.transport.requests --hidden-import google_auth_oauthlib.flow plan_generator.py
+        run: pyinstaller --name PlanOperaciy --windowed --icon=hospital.ico --add-data "version.txt;." --add-data "diagnoses.json;." --add-data "diagnosis_combinations.json;." --add-data "diagnosis_aliases.json;." --add-data "room_rules.json;." --add-data "calendars.example.json;." --add-data "credentials.example.json;." --hidden-import tkcalendar --hidden-import fuzzywuzzy --hidden-import googleapiclient.discovery --hidden-import google.auth.transport.requests --hidden-import google_auth_oauthlib.flow --hidden-import gui --hidden-import gui.app --hidden-import updater --hidden-import certifi --hidden-import room_rules --hidden-import calendar_provider --hidden-import calendar_provider.google_backend plan_generator.py
 
       - name: Загрузка артефакта (собранное приложение)
         uses: actions/upload-artifact@v6

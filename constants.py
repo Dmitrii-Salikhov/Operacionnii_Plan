@@ -4,3 +4,8 @@ WEEKDAYS_FULL = ["Понедельник", "Вторник", "Среда", "Че
 
 CONFIG_FILE = "app_config.json"
 OLD_CONFIG_FILE = "last_path.json"
+
+CALENDARS_FILE = "calendars.json"
+CALENDARS_EXAMPLE_FILE = "calendars.example.json"
+CREDENTIALS_FILE = "credentials.json"
+CREDENTIALS_EXAMPLE_FILE = "credentials.example.json"

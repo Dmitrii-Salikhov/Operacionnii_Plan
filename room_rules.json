@@ -1,0 +1,9 @@
+{
+  "tonsil_keywords": ["тонзил", "т/э", "т-э", "т/эктом", "тэ"],
+  "narcosis_closed_phrases": ["закрыто для наркоза", "зарыто для наркоза"],
+  "narcosis_closed_fuzzy": "закрыто для наркоза",
+  "narcosis_closed_fuzzy_threshold": 85,
+  "generalochka_keywords": ["генералочка"],
+  "holiday_keywords": ["праздник", "выходной", "каникулы"],
+  "service_keywords": ["для со", "каникулы", "генералочка"]
+}

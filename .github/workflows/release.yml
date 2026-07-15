@@ -27,23 +27,40 @@ jobs:
           pip install -r requirements.txt
 
       - name: Сборка PyInstaller
-        run: pyinstaller --name PlanOperaciy --windowed --icon=hospital.ico --hidden-import tkcalendar --hidden-import fuzzywuzzy --hidden-import googleapiclient.discovery --hidden-import google.auth.transport.requests --hidden-import google_auth_oauthlib.flow --hidden-import updater --hidden-import certifi plan_generator.py
+        run: pyinstaller --name PlanOperaciy --windowed --icon=hospital.ico --add-data "version.txt;." --add-data "diagnoses.json;." --add-data "diagnosis_combinations.json;." --add-data "diagnosis_aliases.json;." --add-data "room_rules.json;." --add-data "calendars.example.json;." --add-data "credentials.example.json;." --hidden-import tkcalendar --hidden-import fuzzywuzzy --hidden-import googleapiclient.discovery --hidden-import google.auth.transport.requests --hidden-import google_auth_oauthlib.flow --hidden-import gui --hidden-import gui.app --hidden-import updater --hidden-import certifi --hidden-import room_rules --hidden-import calendar_provider --hidden-import calendar_provider.google_backend plan_generator.py
 
-      - name: Копирование version.txt в корень дистрибутива
-        run: copy version.txt dist\PlanOperaciy\version.txt
-        shell: cmd
-
-      - name: Создать ZIP-архив
+      - name: Копирование служебных файлов в корень дистрибутива
         run: |
-          cd dist\PlanOperaciy
-          7z a ..\PlanOperaciy-Windows.zip *
+          copy version.txt dist\PlanOperaciy\version.txt
+          copy diagnoses.json dist\PlanOperaciy\diagnoses.json
+          copy diagnosis_combinations.json dist\PlanOperaciy\diagnosis_combinations.json
+          copy diagnosis_aliases.json dist\PlanOperaciy\diagnosis_aliases.json
+          copy room_rules.json dist\PlanOperaciy\room_rules.json
+          copy calendars.example.json dist\PlanOperaciy\calendars.example.json
+          copy credentials.example.json dist\PlanOperaciy\credentials.example.json
         shell: cmd
 
-      - name: Создать релиз и загрузить артефакт
+      - name: Создать ZIP-архив и SHA-256
+        shell: pwsh
+        run: |
+          Set-Location dist\PlanOperaciy
+          7z a ..\PlanOperaciy-Windows.zip *
+          Set-Location ..
+          $hash = (Get-FileHash PlanOperaciy-Windows.zip -Algorithm SHA256).Hash.ToLower()
+          "$hash  PlanOperaciy-Windows.zip" | Out-File -FilePath PlanOperaciy-Windows.zip.sha256 -Encoding ascii
+          Write-Host "SHA256: $hash"
+
+      - name: Создать релиз и загрузить артефакты
         uses: softprops/action-gh-release@v3
         with:
-          files: dist/PlanOperaciy-Windows.zip
+          files: |
+            dist/PlanOperaciy-Windows.zip
+            dist/PlanOperaciy-Windows.zip.sha256
           name: "Release ${{ github.ref_name }}"
-          body: "Автоматическая сборка версии ${{ github.ref_name }}"
+          body: |
+            Автоматическая сборка версии ${{ github.ref_name }}
+
+            Целостность: проверьте `PlanOperaciy-Windows.zip.sha256` (SHA-256).
+            Клиент обновлений откажется ставить релиз без совпадения контрольной суммы.
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

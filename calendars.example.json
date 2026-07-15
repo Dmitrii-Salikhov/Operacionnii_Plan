@@ -1,0 +1,7 @@
+{
+  "provider": "google",
+  "calendar_ids": [
+    "your-first-calendar@gmail.com",
+    "your-second-calendar@gmail.com"
+  ]
+}

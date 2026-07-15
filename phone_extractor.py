@@ -1,6 +1,8 @@
 import re
-import pandas as pd
 from typing import List, Tuple, Dict, Any
+
+from room_rules import is_service_event
+
 
 def extract_phones_from_events(events: List[Dict[str, Any]]) -> List[Tuple[str, str]]:
     """
@@ -16,8 +18,7 @@ def extract_phones_from_events(events: List[Dict[str, Any]]) -> List[Tuple[str, 
             continue
 
         # Пропускаем служебные записи
-        low = full_text.lower()
-        if any(kw in low for kw in ('закрыто для наркоза', 'выходной', 'генералочка', 'каникулы')):
+        if is_service_event(full_text):
             continue
 
         # Извлекаем первый 11-значный номер, начинающийся с 7 или 8

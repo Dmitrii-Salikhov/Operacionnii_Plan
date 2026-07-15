@@ -1,28 +1,43 @@
 import pandas as pd
-import re
-from datetime import datetime, timedelta
+import logging
+from datetime import datetime, timedelta, time as dt_time
 from collections import defaultdict, Counter
 from openpyxl import Workbook
 from openpyxl.styles import Font, Alignment, Border, Side
 from openpyxl.utils import get_column_letter
-from fuzzywuzzy import fuzz
 
-from patient_parser import patient_parser
-from config_surgeons import SURGEON_5, SURGEON_7, SURGEON_MA, FORBIDDEN_MA
+from patient_parser import patient_parser, LOW_CONFIDENCE_THRESHOLD
+from config_surgeons import SURGEON_5, SURGEON_7, SURGEON_MA, FORBIDDEN_MA, pick_ma_surgeon
 from constants import WEEKDAYS_RU, WEEKDAYS_FULL
+from room_rules import (
+    classify_calendar_title,
+    is_service_event,
+    is_tonsillectomy,
+)
 
-def is_service_event(title: str):
-    low = title.lower()
-    if 'для со' in low:
-        return True
-    # Нечёткое сравнение: любая опечатка в любом слове будет распознана
-    if fuzz.partial_ratio("закрыто для наркоза", low) >= 85:
-        return True
-    if 'генералочка' in low:
-        return True
-    if 'каникулы' in low:
-        return True
-    return False
+logger = logging.getLogger("plan_generator")
+
+
+def parse_time_str(value, default=None):
+    """Парсит 'HH:MM:SS' или 'HH:MM'. При ошибке — default или ValueError."""
+    text = str(value or "").strip()
+    for fmt in ("%H:%M:%S", "%H:%M"):
+        try:
+            return datetime.strptime(text, fmt).time()
+        except ValueError:
+            continue
+    if default is not None:
+        return default
+    raise ValueError(f"Некорректное время: {value!r}")
+
+
+# re-export для тестов / обратной совместимости
+__all__ = [
+    "OperationPlanGenerator",
+    "parse_time_str",
+    "is_service_event",
+]
+
 
 class OperationPlanGenerator:
     def __init__(self, events_data=None, filepath=None, log_callback=None):
@@ -71,7 +86,8 @@ class OperationPlanGenerator:
                     if not pd.isna(ts):
                         dt = ts.to_pydatetime()
                         break
-                except:
+                except (ValueError, TypeError, OverflowError, AttributeError) as e:
+                    logger.debug("Формат даты %s не подошёл для %r: %s", fmt, date_str, e)
                     continue
             if dt is None:
                 # последняя попытка – автоопределение с dayfirst=True
@@ -86,16 +102,22 @@ class OperationPlanGenerator:
             if self.week_start is None:
                 self.week_start = dt - timedelta(days=dt.weekday())
             day_idx = dt.weekday()
-            if 'праздник' in title.lower() or 'выходной' in title.lower() or 'каникулы' in title.lower():
+
+            event_kind = classify_calendar_title(title)
+            if event_kind == "holiday":
                 continue
-            if 'закрыто для наркоза' in title.lower() or 'зарыто для наркоза' in title.lower():
-                self.events_by_day[day_idx].append({"type": "narcosis_closed", "time": time_str, "date": dt})
+            if event_kind == "narcosis_closed":
+                self.events_by_day[day_idx].append(
+                    {"type": "narcosis_closed", "time": time_str, "date": dt}
+                )
                 continue
-            if 'генералочка' in title.lower():
-                self.events_by_day[day_idx].append({"type": "generalochka", "time": time_str, "date": dt})
+            if event_kind == "generalochka":
+                self.events_by_day[day_idx].append(
+                    {"type": "generalochka", "time": time_str, "date": dt}
+                )
                 self.generalochka_days.add(day_idx)
                 continue
-            if is_service_event(title):
+            if event_kind == "service":
                 self.log(f"Служебное событие пропущено: {title}")
                 continue
 
@@ -115,14 +137,20 @@ class OperationPlanGenerator:
                 if ev.get("type") == "narcosis_closed":
                     t = ev.get("time", "23:59")
                     try:
-                        narcosis_closed_time = datetime.strptime(t, '%H:%M:%S').time()
-                    except:
-                        narcosis_closed_time = datetime.strptime(t, '%H:%M').time()
+                        narcosis_closed_time = parse_time_str(t)
+                    except ValueError as e:
+                        narcosis_closed_time = dt_time(23, 59)
+                        self.log(
+                            f"Некорректное время «закрыто для наркоза» ({t}): {e}. Принято 23:59",
+                            "warning",
+                        )
                     break
 
             patients = [p for p in events if 'type' not in p or p.get('type') not in ('narcosis_closed', 'generalochka')]
             for p in patients:
-                diag, operation = patient_parser.get_diagnosis_and_operation(p['diagnosis_raw'])
+                resolved = patient_parser.resolve_diagnosis(p['diagnosis_raw'])
+                diag, operation = resolved['diagnosis'], resolved['operation']
+                confidence = resolved['confidence']
                 age, unit = p['age'], p['age_unit']
                 if age is None:
                     age, unit = patient_parser.resolve_age_defaults(p['diagnosis_raw'], None)
@@ -133,16 +161,31 @@ class OperationPlanGenerator:
                 if operation == "Септопластика" and p.get('has_osteotomy'):
                     operation = "Септопластика (остеотомия)"
                 p['operation'] = operation
+                p['confidence'] = confidence
+                p['confidence_source'] = resolved['source']
+                # Низкая уверенность или неизвестный ключ → уточнение в GUI
+                if (
+                    p.get('is_unknown_diag')
+                    or confidence < LOW_CONFIDENCE_THRESHOLD
+                ):
+                    p['is_unknown_diag'] = True
+                    if confidence < LOW_CONFIDENCE_THRESHOLD and resolved['source'] != 'unknown':
+                        self.log(
+                            f"{p['name']} – низкая уверенность диагноза "
+                            f"({confidence:.0%}, {resolved['source']}): "
+                            f"«{p['diagnosis_raw']}» → {operation}",
+                            'warning',
+                        )
 
                 if is_generalochka:
-                    if any(kw in p['diagnosis_raw'].lower() for kw in ('тонзил', 'т/э', 'т-э', 'т/эктом', 'тэ')):
+                    if is_tonsillectomy(p['diagnosis_raw']):
                         self.log(f"{p['name']} – генералочка, тонзилэктомия отменена.")
                         continue
                     op_room = "MA"
                 else:
                     is_ma = p['is_ma']
                     if is_ma:
-                        if any(kw in p['diagnosis_raw'].lower() for kw in ('тонзил', 'т/э', 'т-э', 'т/эктом', 'тэ')):
+                        if is_tonsillectomy(p['diagnosis_raw']):
                             op_room = "7"
                         else:
                             op_room = "MA"
@@ -151,11 +194,16 @@ class OperationPlanGenerator:
 
                     if op_room == "5" and narcosis_closed_time and p.get('time'):
                         try:
-                            pt = datetime.strptime(p['time'], '%H:%M:%S').time()
-                        except:
-                            pt = datetime.strptime(p['time'], '%H:%M').time()
+                            pt = parse_time_str(p['time'])
+                        except ValueError as e:
+                            self.log(
+                                f"{p['name']} – некорректное время операции ({p.get('time')}): {e}",
+                                "warning",
+                            )
+                            self.daily_blocks[day][op_room].append(p)
+                            continue
                         if pt >= narcosis_closed_time:
-                            if any(kw in p['diagnosis_raw'].lower() for kw in ('тонзил', 'т/э', 'т-э', 'т/эктом', 'тэ')):
+                            if is_tonsillectomy(p['diagnosis_raw']):
                                 op_room = "7"
                             else:
                                 op_room = "MA"
@@ -183,11 +231,9 @@ class OperationPlanGenerator:
             for p in blocks["7"]:
                 p['surgeon'] = SURGEON_7
                 surgeon_schedule[day][SURGEON_7].append('7')
-            ma_surgeon = SURGEON_MA[day]
-            if ma_surgeon == surgeon_5:
-                candidates = ["Баганов Д.Г.", "Гасанов М.Т.", "Карибова С.О."]
-                candidates = [c for c in candidates if c != surgeon_5 and c not in FORBIDDEN_MA]
-                ma_surgeon = candidates[0] if candidates else "Не назначен"
+            ma_surgeon = pick_ma_surgeon(
+                day, SURGEON_5, SURGEON_7, SURGEON_MA, FORBIDDEN_MA
+            )
             for p in blocks["MA"]:
                 p['surgeon'] = ma_surgeon
                 surgeon_schedule[day][ma_surgeon].append('MA')
