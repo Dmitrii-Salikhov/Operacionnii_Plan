@@ -83,3 +83,70 @@ def open_folder(path):
         os.startfile(path)
     else:
         subprocess.call(["xdg-open", path])
+
+
+# Цвета строк журнала (окно лога и подгрузка из файла)
+LOG_TAG_COLORS = {
+    "info": "#1a1a1a",
+    "warning": "#E67E22",
+    "error": "#E74C3C",
+    "success": "#27AE60",
+}
+
+_SUCCESS_MARKERS = (
+    "успешн",
+    "готов к работе",
+    "сохранён",
+    "сохранены",
+    "загружены",
+    "добавлен",
+    "обновлено",
+    "экспортирован",
+    "импортировано",
+    "переавторизация",
+    "переподключ",
+    "скопирован",
+)
+
+_ERROR_MARKERS = (
+    "ошибка",
+    "не удалось",
+    "не выбран",
+    "отсутствует",
+)
+
+
+def tag_for_log_line(line: str) -> str:
+    """Подбирает тег цвета по уровню лога или ключевым словам."""
+    text = (line or "").strip()
+    if not text:
+        return "info"
+    upper = text.upper()
+    if " - ERROR -" in upper or upper.endswith(" - ERROR"):
+        return "error"
+    if " - WARNING -" in upper or " - WARN -" in upper:
+        return "warning"
+    low = text.lower()
+    if any(m in low for m in _ERROR_MARKERS):
+        return "error"
+    if any(m in low for m in _SUCCESS_MARKERS):
+        return "success"
+    return "info"
+
+
+def configure_log_text_tags(text_widget) -> None:
+    """Настраивает теги цветов для tk.Text журнала."""
+    for name, color in LOG_TAG_COLORS.items():
+        text_widget.tag_configure(name, foreground=color)
+
+
+def insert_colored_log(text_widget, content: str, clear: bool = True) -> None:
+    """Вставляет многострочный лог с раскраской по строкам."""
+    if clear:
+        text_widget.delete("1.0", "end")
+    if not content:
+        return
+    text = content if content.endswith("\n") else content + "\n"
+    for line in text.splitlines(keepends=True):
+        tag = tag_for_log_line(line.rstrip("\n"))
+        text_widget.insert("end", line, tag)

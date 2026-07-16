@@ -22,7 +22,13 @@ from calendar_provider import (
     is_calendar_configured,
     reauthorize,
 )
-from gui.helpers import load_config, open_folder, save_config
+from gui.helpers import (
+    configure_log_text_tags,
+    insert_colored_log,
+    load_config,
+    open_folder,
+    save_config,
+)
 from gui.surgeons_dialog import open_surgeons_dialog
 from gui.unknown_diag_dialog import resolve_unknown_diagnoses
 from gui.week_dialog import ask_week_monday
@@ -225,10 +231,7 @@ class App(tk.Tk):
         self.log_text.bind("<Command-c>", self.copy_log)
         self.log_text.bind("<Control-c>", self.copy_log)
 
-        self.log_text.tag_configure("info", foreground="black")
-        self.log_text.tag_configure("warning", foreground="#E67E22")
-        self.log_text.tag_configure("error", foreground="#E74C3C")
-        self.log_text.tag_configure("success", foreground="#27AE60")
+        configure_log_text_tags(self.log_text)
 
         self.progress = ttk.Progressbar(main_frame, mode="indeterminate")
 
@@ -246,16 +249,14 @@ class App(tk.Tk):
         lines = self.log_text.get("1.0", "end-1c").split("\n")
         if len(lines) > self.MAX_LOG_LINES:
             new_text = "\n".join(lines[-self.MAX_LOG_LINES :])
-            self.log_text.delete("1.0", tk.END)
-            self.log_text.insert("1.0", new_text, "info")
+            insert_colored_log(self.log_text, new_text, clear=True)
 
     def _load_existing_log(self):
         """Подгружает хвост plan_generator.log в окно и пролистывает вниз."""
         content = read_log_tail(LOG_FILENAME, self.MAX_LOG_LINES).rstrip("\n")
         if not content:
             return
-        self.log_text.delete("1.0", tk.END)
-        self.log_text.insert("1.0", content + "\n", "info")
+        insert_colored_log(self.log_text, content + "\n", clear=True)
         self._scroll_log_to_end()
 
     def log_message(self, msg, tag="info"):
@@ -294,11 +295,12 @@ class App(tk.Tk):
         sb = tk.Scrollbar(frame, command=text.yview)
         sb.pack(side=tk.RIGHT, fill=tk.Y)
         text.config(yscrollcommand=sb.set)
+        configure_log_text_tags(text)
 
         content = read_log_tail(LOG_FILENAME, self.MAX_LOG_LINES)
         if not content.strip():
             content = self.log_text.get("1.0", tk.END)
-        text.insert("1.0", content)
+        insert_colored_log(text, content, clear=True)
         text.config(state="disabled")
         top.update_idletasks()
         self._scroll_log_to_end(text)
@@ -319,8 +321,7 @@ class App(tk.Tk):
         if not content.strip():
             content = self.log_text.get("1.0", tk.END)
         text_widget.config(state="normal")
-        text_widget.delete("1.0", tk.END)
-        text_widget.insert("1.0", content)
+        insert_colored_log(text_widget, content, clear=True)
         text_widget.config(state="disabled")
         self._scroll_log_to_end(text_widget)
 

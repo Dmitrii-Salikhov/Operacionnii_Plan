@@ -29,3 +29,11 @@ def test_load_config_migrates_old_path_and_handles_invalid_date(tmp_path, monkey
     monkeypatch.setattr(helpers, "OLD_CONFIG_FILE", str(old_path))
     assert helpers.load_config() == {"last_dir": "/legacy", "last_monday": None}
     assert not old_path.exists()
+
+
+def test_tag_for_log_line_success_and_error():
+    assert helpers.tag_for_log_line("2026-07-16 - ERROR - Ошибка загрузки") == "error"
+    assert helpers.tag_for_log_line("2026-07-16 - WARNING - нет событий") == "warning"
+    assert helpers.tag_for_log_line("[12:00] События успешно загружены") == "success"
+    assert helpers.tag_for_log_line("Не удалось создать план") == "error"
+    assert helpers.tag_for_log_line("Обработка событий...") == "info"
