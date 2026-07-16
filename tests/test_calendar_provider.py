@@ -100,3 +100,40 @@ def test_get_backend_unknown_provider(tmp_path, monkeypatch):
         assert "не реализован" in str(error)
     else:
         raise AssertionError("Expected unknown provider to fail")
+
+
+def test_placeholder_calendar_ids_are_ignored(tmp_path, monkeypatch):
+    primary = tmp_path / "calendars.json"
+    primary.write_text(
+        json.dumps(
+            {
+                "calendar_ids": [
+                    "your-first-calendar@gmail.com",
+                    "zod.dr131@gmail.com",
+                    "your-second-calendar@gmail.com",
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(cal_config, "CALENDARS_FILE", str(primary))
+    monkeypatch.setattr(cal_config, "CALENDARS_EXAMPLE_FILE", str(tmp_path / "x.json"))
+    assert cal_config.load_calendar_ids() == ["zod.dr131@gmail.com"]
+
+
+def test_only_placeholders_yield_empty_list(tmp_path, monkeypatch):
+    primary = tmp_path / "calendars.json"
+    primary.write_text(
+        json.dumps(
+            {
+                "calendar_ids": [
+                    "your-first-calendar@gmail.com",
+                    "your-second-calendar@gmail.com",
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(cal_config, "CALENDARS_FILE", str(primary))
+    monkeypatch.setattr(cal_config, "CALENDARS_EXAMPLE_FILE", str(tmp_path / "x.json"))
+    assert cal_config.load_calendar_ids() == []

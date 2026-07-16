@@ -19,6 +19,34 @@ DEFAULT_PROVIDER = "google"
 # Известные провайдеры. Новый адаптер — добавить сюда и в factory.
 KNOWN_PROVIDERS = frozenset({"google"})
 
+# Плейсхолдеры из старых calendars.example.json — не слать в Google API.
+_PLACEHOLDER_FRAGMENTS = (
+    "your-first-calendar",
+    "your-second-calendar",
+    "example@example",
+)
+
+
+def is_placeholder_calendar_id(cal_id: str) -> bool:
+    """True для пустых и шаблонных ID из example."""
+    low = str(cal_id or "").strip().lower()
+    if not low:
+        return True
+    return any(fragment in low for fragment in _PLACEHOLDER_FRAGMENTS)
+
+
+def _normalize_calendar_ids(raw_ids) -> List[str]:
+    ids = [str(x).strip() for x in (raw_ids or []) if str(x).strip()]
+    real = [cal_id for cal_id in ids if not is_placeholder_calendar_id(cal_id)]
+    skipped = len(ids) - len(real)
+    if skipped:
+        logger.warning(
+            "Пропущено %s шаблонных ID календаря — заполните %s реальными email/ID",
+            skipped,
+            CALENDARS_FILE,
+        )
+    return real
+
 
 def _read_config_dict() -> Dict[str, Any]:
     """Читает первый доступный JSON (calendars.json, иначе example)."""
@@ -59,7 +87,7 @@ def load_calendar_ids() -> List[str]:
                 ids = data
             else:
                 continue
-            ids = [str(x).strip() for x in ids if str(x).strip()]
+            ids = _normalize_calendar_ids(ids)
             if ids:
                 return ids
         except (OSError, json.JSONDecodeError, TypeError, ValueError) as e:

@@ -10,6 +10,7 @@ from google.auth.exceptions import GoogleAuthError, RefreshError
 from google.auth.transport.requests import Request
 from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
+from googleapiclient.errors import HttpError
 
 from calendar_provider.config import ensure_calendars_config
 from calendar_provider.types import CalendarEvent
@@ -60,8 +61,10 @@ def fetch_google_calendar_events(monday_date: date) -> List[CalendarEvent]:
     calendar_ids = ensure_calendars_config()
     if not calendar_ids:
         raise ValueError(
-            f"Не заданы календари. Создайте {CALENDARS_FILE} "
-            f"(образец: {CALENDARS_EXAMPLE_FILE}) со списком calendar_ids."
+            f"Не заданы календари в {CALENDARS_FILE}.\n\n"
+            f"Откройте файл рядом с программой (образец: {CALENDARS_EXAMPLE_FILE}) "
+            "и укажите реальные email/ID календарей Google в calendar_ids.\n"
+            "Шаблонные адреса вроде your-first-calendar@gmail.com не работают."
         )
 
     service = get_google_calendar_service()
@@ -75,17 +78,27 @@ def fetch_google_calendar_events(monday_date: date) -> List[CalendarEvent]:
 
     all_events: List[CalendarEvent] = []
     for cal_id in calendar_ids:
-        events_result = (
-            service.events()
-            .list(
-                calendarId=cal_id,
-                timeMin=time_min,
-                timeMax=time_max,
-                singleEvents=True,
-                orderBy="startTime",
+        try:
+            events_result = (
+                service.events()
+                .list(
+                    calendarId=cal_id,
+                    timeMin=time_min,
+                    timeMax=time_max,
+                    singleEvents=True,
+                    orderBy="startTime",
+                )
+                .execute()
             )
-            .execute()
-        )
+        except HttpError as e:
+            status = getattr(getattr(e, "resp", None), "status", None)
+            if status == 404:
+                raise ValueError(
+                    f"Календарь не найден: {cal_id}\n\n"
+                    f"Проверьте {CALENDARS_FILE} рядом с программой — "
+                    "там должны быть реальные email/ID, к которым есть доступ у аккаунта Google."
+                ) from e
+            raise
         for event in events_result.get("items", []):
             start_raw = event["start"].get("dateTime", event["start"].get("date"))
             end_raw = event["end"].get("dateTime", event["end"].get("date"))

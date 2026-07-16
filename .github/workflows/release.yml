@@ -57,10 +57,6 @@ jobs:
             dist/PlanOperaciy-Windows.zip
             dist/PlanOperaciy-Windows.zip.sha256
           name: "Release ${{ github.ref_name }}"
-          body: |
-            Автоматическая сборка версии ${{ github.ref_name }}
-
-            Целостность: проверьте `PlanOperaciy-Windows.zip.sha256` (SHA-256).
-            Клиент обновлений откажется ставить релиз без совпадения контрольной суммы.
+          body_path: RELEASE_NOTES.md
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

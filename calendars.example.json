@@ -1,7 +1,5 @@
 {
   "provider": "google",
-  "calendar_ids": [
-    "your-first-calendar@gmail.com",
-    "your-second-calendar@gmail.com"
-  ]
+  "calendar_ids": [],
+  "_comment": "Укажите email/ID календарей Google. Файл calendars.json создаётся рядом с программой (образец — этот файл)."
 }
