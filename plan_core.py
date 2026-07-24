@@ -36,7 +36,17 @@ __all__ = [
     "OperationPlanGenerator",
     "parse_time_str",
     "is_service_event",
+    "admissions_excel_filename",
 ]
+
+
+def admissions_excel_filename(week_start):
+    """Имя отдельного файла списка поступлений за неделю."""
+    week_end = week_start + timedelta(days=6)
+    return (
+        f"Список поступлений ЛОР с {week_start.strftime('%d.%m.%Y')} "
+        f"по {week_end.strftime('%d.%m.%Y')}.xlsx"
+    )
 
 
 class OperationPlanGenerator:
@@ -163,17 +173,24 @@ class OperationPlanGenerator:
                 p['operation'] = operation
                 p['confidence'] = confidence
                 p['confidence_source'] = resolved['source']
-                # Низкая уверенность или неизвестный ключ → уточнение в GUI
+                # Низкая уверенность, неизвестный ключ или короткое ФИО → уточнение в GUI
                 if (
                     p.get('is_unknown_diag')
                     or confidence < LOW_CONFIDENCE_THRESHOLD
+                    or p.get('needs_name_review')
                 ):
-                    p['is_unknown_diag'] = True
+                    if p.get('is_unknown_diag') or confidence < LOW_CONFIDENCE_THRESHOLD:
+                        p['is_unknown_diag'] = True
                     if confidence < LOW_CONFIDENCE_THRESHOLD and resolved['source'] != 'unknown':
                         self.log(
                             f"{p['name']} – низкая уверенность диагноза "
                             f"({confidence:.0%}, {resolved['source']}): "
                             f"«{p['diagnosis_raw']}» → {operation}",
+                            'warning',
+                        )
+                    if p.get('needs_name_review'):
+                        self.log(
+                            f"Короткое ФИО «{p['name']}» — на уточнение.",
                             'warning',
                         )
 
@@ -339,8 +356,65 @@ class OperationPlanGenerator:
             ma_surgeon = ma_patients[0]['surgeon'] if ma_patients else None
             add_block("М/А", ma_patients, "М/А", ma_surgeon)
 
-        # Лист «Поступление»
-        ws_adm = wb.create_sheet(title="Поступление")
+        # Лист «Поступление» (перед статистикой)
+        self._write_admission_sheet(wb.create_sheet(title="Поступление"))
+
+        # Лист «Статистика»
+        ws_stats = wb.create_sheet("Статистика")
+        op_counter = Counter()
+        surgeon_counter = Counter()
+        age_groups = {"0-14": 0, "15-17": 0, "18-64": 0, "65+": 0}
+        for day in range(5):
+            for room in ["5", "7", "MA"]:
+                for p in self.daily_blocks[day][room]:
+                    ops = [o.strip().title() for o in p['operation'].split(',')]
+                    for op in ops:
+                        op_counter[op] += 1
+                    surgeon = p.get('surgeon', 'Не указан')
+                    surgeon_counter[surgeon] += 1
+                    age = p.get('age')
+                    if age is not None:
+                        if age <= 14:
+                            age_groups["0-14"] += 1
+                        elif age <= 17:
+                            age_groups["15-17"] += 1
+                        elif age <= 64:
+                            age_groups["18-64"] += 1
+                        else:
+                            age_groups["65+"] += 1
+
+        ws_stats.append(["Статистика операций"])
+        ws_stats.append(["Операция", "Количество"])
+        for op, cnt in op_counter.most_common():
+            ws_stats.append([op, cnt])
+
+        ws_stats.append([])
+        ws_stats.append(["Хирург", "Количество операций"])
+        for surg, cnt in surgeon_counter.most_common():
+            ws_stats.append([surg, cnt])
+
+        ws_stats.append([])
+        ws_stats.append(["Возрастная группа", "Количество пациентов"])
+        for grp, cnt in age_groups.items():
+            ws_stats.append([grp, cnt])
+
+        # Автоподбор ширины столбцов
+        for col_cells in ws_stats.columns:
+            max_length = 0
+            col_letter = get_column_letter(col_cells[0].column)
+            for cell in col_cells:
+                if cell.value:
+                    max_length = max(max_length, len(str(cell.value)))
+            adjusted_width = max_length + 4
+            ws_stats.column_dimensions[col_letter].width = adjusted_width
+
+        wb.save(output_path)
+        return True
+
+    def _write_admission_sheet(self, ws_adm):
+        """Заполняет лист «Поступление» (те же данные, что в полном плане)."""
+        wrap_align = Alignment(horizontal='left', vertical='top', wrap_text=True)
+        center_align = Alignment(horizontal='center', vertical='center', wrap_text=True)
         adm_header_font = Font(bold=True, size=11, name='Calibri')
         adm_data_font = Font(size=12, name='Calibri')
         small_font = Font(size=10, name='Calibri')
@@ -416,54 +490,13 @@ class OperationPlanGenerator:
         ws_adm.page_margins.top = 0.5
         ws_adm.page_margins.bottom = 0.5
 
-        # Лист «Статистика»
-        ws_stats = wb.create_sheet("Статистика")
-        op_counter = Counter()
-        surgeon_counter = Counter()
-        age_groups = {"0-14": 0, "15-17": 0, "18-64": 0, "65+": 0}
-        for day in range(5):
-            for room in ["5", "7", "MA"]:
-                for p in self.daily_blocks[day][room]:
-                    ops = [o.strip().title() for o in p['operation'].split(',')]
-                    for op in ops:
-                        op_counter[op] += 1
-                    surgeon = p.get('surgeon', 'Не указан')
-                    surgeon_counter[surgeon] += 1
-                    age = p.get('age')
-                    if age is not None:
-                        if age <= 14:
-                            age_groups["0-14"] += 1
-                        elif age <= 17:
-                            age_groups["15-17"] += 1
-                        elif age <= 64:
-                            age_groups["18-64"] += 1
-                        else:
-                            age_groups["65+"] += 1
-
-        ws_stats.append(["Статистика операций"])
-        ws_stats.append(["Операция", "Количество"])
-        for op, cnt in op_counter.most_common():
-            ws_stats.append([op, cnt])
-
-        ws_stats.append([])
-        ws_stats.append(["Хирург", "Количество операций"])
-        for surg, cnt in surgeon_counter.most_common():
-            ws_stats.append([surg, cnt])
-
-        ws_stats.append([])
-        ws_stats.append(["Возрастная группа", "Количество пациентов"])
-        for grp, cnt in age_groups.items():
-            ws_stats.append([grp, cnt])
-
-        # Автоподбор ширины столбцов
-        for col_cells in ws_stats.columns:
-            max_length = 0
-            col_letter = get_column_letter(col_cells[0].column)
-            for cell in col_cells:
-                if cell.value:
-                    max_length = max(max_length, len(str(cell.value)))
-            adjusted_width = max_length + 4
-            ws_stats.column_dimensions[col_letter].width = adjusted_width
-
+    def generate_admissions_excel(self, output_path):
+        """Отдельный Excel только с листом «Поступление»."""
+        if self.week_start is None:
+            raise ValueError("Не определена дата начала недели")
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "Поступление"
+        self._write_admission_sheet(ws)
         wb.save(output_path)
         return True

@@ -1,4 +1,4 @@
-"""Диалоги уточнения неизвестных диагнозов."""
+"""Диалоги уточнения нераспознанных / сомнительных событий."""
 
 import tkinter as tk
 from tkinter import messagebox, ttk
@@ -22,38 +22,46 @@ def _unique_diagnosis_options():
     return sorted(diags, key=str.lower), sorted(opers, key=str.lower)
 
 
+def _needs_review(patient) -> bool:
+    return bool(
+        patient.get("is_unknown_diag") or patient.get("needs_name_review")
+    )
+
+
 def resolve_unknown_diagnoses(parent, gen):
-    """Показывает диалог для пациентов с неизвестным диагнозом."""
+    """Диалог для неизвестного диагноза, низкой уверенности или короткого имени."""
     unknown = []
     for day in range(5):
         for room in ["5", "7", "MA"]:
             for p in gen.daily_blocks[day][room]:
-                if p.get("is_unknown_diag"):
+                if _needs_review(p):
                     unknown.append(p)
     if not unknown:
         return
 
     top = tk.Toplevel(parent)
-    top.title("Уточнение диагнозов (неизвестные / низкая уверенность)")
-    top.geometry("960x520")
+    top.title("Уточнение нераспознанных событий")
+    top.geometry("1000x520")
     top.transient(parent)
     top.grab_set()
 
     frame = ttk.Frame(top, padding=10)
     frame.pack(fill=tk.BOTH, expand=True)
 
-    columns = ("name", "raw", "diag", "oper", "conf")
+    columns = ("name", "raw", "diag", "oper", "conf", "reason")
     tree = ttk.Treeview(frame, columns=columns, show="headings", selectmode="browse")
     tree.heading("name", text="ФИО")
     tree.heading("raw", text="Исходный текст")
     tree.heading("diag", text="Диагноз")
     tree.heading("oper", text="Операция")
     tree.heading("conf", text="Уверенность")
-    tree.column("name", width=160)
-    tree.column("raw", width=220)
-    tree.column("diag", width=240)
-    tree.column("oper", width=200)
-    tree.column("conf", width=90)
+    tree.heading("reason", text="Причина")
+    tree.column("name", width=140)
+    tree.column("raw", width=200)
+    tree.column("diag", width=220)
+    tree.column("oper", width=180)
+    tree.column("conf", width=80)
+    tree.column("reason", width=140)
     tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
 
     scrollbar = ttk.Scrollbar(frame, orient=tk.VERTICAL, command=tree.yview)
@@ -73,6 +81,7 @@ def resolve_unknown_diagnoses(parent, gen):
                 p.get("diagnosis", "Диагноз не указан"),
                 p.get("operation", "Операция не указана"),
                 conf_label,
+                _review_reason(p),
             ),
         )
 
@@ -104,16 +113,40 @@ def resolve_unknown_diagnoses(parent, gen):
     parent.wait_window(top)
 
 
+def _review_reason(patient) -> str:
+    parts = []
+    if patient.get("needs_name_review"):
+        parts.append("короткое ФИО")
+    if patient.get("is_unknown_diag"):
+        conf = patient.get("confidence")
+        if isinstance(conf, (int, float)) and conf < 1.0:
+            parts.append("низкая уверенность")
+        else:
+            parts.append("неизвестный диагноз")
+    return ", ".join(parts) or "уточнение"
+
+
 def edit_unknown_patient(parent, patient, tree):
     edit = tk.Toplevel(parent)
-    edit.title("Редактирование диагноза")
-    edit.geometry("500x250")
+    edit.title("Редактирование события")
+    edit.geometry("520x320")
     edit.transient(parent)
     edit.grab_set()
 
+    ttk.Label(edit, text="ФИО:").pack(pady=(10, 0))
+    name_var = tk.StringVar(value=patient.get("name", ""))
+    name_entry = ttk.Entry(edit, textvariable=name_var)
+    name_entry.pack(fill=tk.X, padx=10, pady=2)
+    if patient.get("needs_name_review"):
+        ttk.Label(
+            edit,
+            text="Имя короткое — можно оставить как есть или дополнить.",
+            foreground="#555",
+        ).pack(anchor="w", padx=10)
+
     ttk.Label(
         edit, text="Ключевая фраза (можно выбрать или ввести свою):"
-    ).pack(pady=(10, 0))
+    ).pack(pady=(8, 0))
     key_var = tk.StringVar(value=patient.get("diagnosis_raw", ""))
     keys = sorted(patient_parser.diagnosis_map.keys(), key=str.lower)
     key_combo = ttk.Combobox(edit, textvariable=key_var, values=keys, state="normal")
@@ -135,35 +168,38 @@ def edit_unknown_patient(parent, patient, tree):
     oper_combo.pack(fill=tk.X, padx=10, pady=2)
 
     def apply():
+        name = name_var.get().strip()
         key = key_var.get().strip()
         diag = diag_var.get().strip()
         oper = oper_var.get().strip()
-        if not key or not diag or not oper:
+        if not name or not key or not diag or not oper:
             messagebox.showerror("Ошибка", "Все поля должны быть заполнены.")
             return
+        patient["name"] = name
         patient["diagnosis_raw"] = key
         patient["diagnosis"] = diag
         patient["operation"] = oper
         patient["is_unknown_diag"] = False
+        patient["needs_name_review"] = False
         patient["confidence"] = 1.0
         patient["confidence_source"] = "manual"
 
         patient_parser.save_custom_diagnosis(key, diag, oper)
 
         if tree:
-            for item in tree.get_children():
-                if tree.item(item)["values"][0] == patient["name"]:
-                    tree.item(
-                        item,
-                        values=(
-                            patient["name"],
-                            patient.get("diagnosis_raw", ""),
-                            diag,
-                            oper,
-                            "100%",
-                        ),
-                    )
-                    break
+            iid = str(id(patient))
+            if tree.exists(iid):
+                tree.item(
+                    iid,
+                    values=(
+                        patient["name"],
+                        patient.get("diagnosis_raw", ""),
+                        diag,
+                        oper,
+                        "100%",
+                        "готово",
+                    ),
+                )
         edit.destroy()
 
     ttk.Button(edit, text="Применить", command=apply).pack(pady=10)

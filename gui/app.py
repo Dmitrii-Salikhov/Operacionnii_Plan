@@ -34,7 +34,7 @@ from gui.unknown_diag_dialog import resolve_unknown_diagnoses
 from gui.week_dialog import ask_week_monday
 from patient_parser import patient_parser
 from phone_extractor import extract_phones_from_events
-from plan_core import OperationPlanGenerator
+from plan_core import OperationPlanGenerator, admissions_excel_filename
 from updater import check_for_updates
 
 
@@ -52,6 +52,9 @@ class App(tk.Tk):
         config = load_config()
         self.last_dir = config.get("last_dir", "")
         self.last_monday_date = config.get("last_monday")
+        self.export_admissions_var = tk.BooleanVar(
+            value=bool(config.get("export_admissions", False))
+        )
 
         self.input_file = None
         self.calendar_data = None
@@ -136,6 +139,13 @@ class App(tk.Tk):
             command=self.choose_file,
             style="Browse.TButton",
         ).pack(side=tk.RIGHT)
+
+        ttk.Checkbutton(
+            main_frame,
+            text="Также сохранить отдельный «Список поступлений ЛОР»",
+            variable=self.export_admissions_var,
+            command=self._on_export_admissions_toggle,
+        ).pack(anchor="w", pady=(4, 0))
 
         ttk.Button(
             main_frame,
@@ -239,6 +249,9 @@ class App(tk.Tk):
         self.log_message("Проверка обновлений...", "info")
         check_for_updates(self.current_version)
         self.log_message("Проверка обновлений завершена.", "info")
+
+    def _on_export_admissions_toggle(self):
+        save_config(export_admissions=self.export_admissions_var.get())
 
     def _scroll_log_to_end(self, widget=None):
         target = widget if widget is not None else self.log_text
@@ -538,14 +551,29 @@ class App(tk.Tk):
             self.status_text.set(f"План сохранён: {os.path.basename(output_file)}")
 
             self.last_dir = os.path.dirname(output_file)
-            save_config(last_dir=self.last_dir)
+            save_config(
+                last_dir=self.last_dir,
+                export_admissions=self.export_admissions_var.get(),
+            )
 
             self.log_message(
                 "План операций успешно сформирован и сохранён.", "success"
             )
+
+            if self.export_admissions_var.get():
+                adm_name = admissions_excel_filename(self.week_start_date)
+                adm_path = os.path.join(self.last_dir, adm_name)
+                gen.generate_admissions_excel(adm_path)
+                self.log_message(
+                    f"Список поступлений сохранён: {adm_name}", "success"
+                )
+
+            done_msg = "План операций сформирован и сохранён."
+            if self.export_admissions_var.get():
+                done_msg += "\nСписок поступлений сохранён рядом."
             if messagebox.askyesno(
                 "Готово",
-                "План операций сформирован и сохранён.\n\nОткрыть папку с файлом?",
+                f"{done_msg}\n\nОткрыть папку с файлом?",
             ):
                 open_folder(os.path.dirname(output_file))
         except Exception as e:

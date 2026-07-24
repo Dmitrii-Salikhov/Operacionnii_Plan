@@ -387,10 +387,18 @@ class PatientParser:
         if logger:
             logger(f"[ПОСЛЕ normalize_name] '{patient_name}'")
 
-        if len(patient_name.replace(".", "").strip()) <= 2:
+        letters_only = patient_name.replace(".", "").replace(" ", "").strip()
+        if not letters_only:
             if logger:
-                logger(f"[ИГНОРИРОВАНО] Имя слишком короткое: '{patient_name}'")
+                logger("[ИГНОРИРОВАНО] Пустое имя после разбора")
             return None
+
+        needs_name_review = len(letters_only) <= 2
+        if needs_name_review and logger:
+            logger(
+                f"[НА УТОЧНЕНИЕ] Короткое имя «{patient_name}» — "
+                "будет предложено редактирование"
+            )
 
         diag_part_clean = re.sub(r"[?]+", "", diag_part).strip()
         diag_part_clean = re.sub(
@@ -415,6 +423,7 @@ class PatientParser:
             "is_etn": is_etn,
             "has_osteotomy": has_osteotomy,
             "is_unknown_diag": is_unknown_diag,
+            "needs_name_review": needs_name_review,
             "confidence": CONF_UNKNOWN if is_unknown_diag else None,
             "phones": [],
             "full_text": full_text,

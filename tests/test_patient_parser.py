@@ -104,7 +104,10 @@ def test_full_event_parsing_flags_and_phone_cleanup():
     patient = subject.parse_patient_from_event("Сидоров остеотомия септо", "")
     assert patient["has_osteotomy"] is True
     assert subject.parse_patient_from_event("", "") is None
-    assert subject.parse_patient_from_event("А. 5 л Адено", "") is None
+    short = subject.parse_patient_from_event("А. 5 л Адено", "")
+    assert short is not None
+    assert short["needs_name_review"] is True
+    assert short["name"].replace(".", "") == "А"
 
 
 def test_unknown_and_service_titles_are_parser_inputs():
@@ -196,6 +199,26 @@ def test_parser_covers_age_name_bracket_and_short_key_paths(tmp_path):
     assert any("[ФИНАЛ]" in message for message in logs)
     unknown = subject.parse_patient_from_event("Иванов неизвестно", "")
     assert unknown["is_unknown_diag"] is True
+
+
+def test_short_real_surname_goes_to_name_review_not_ignored(tmp_path):
+    """Фамилия из 1–2 букв (напр. «Е») — на уточнение, не игнор."""
+    subject = PatientParser(
+        diagnosis_map={"ат": ("Ат", "Аденотомия")},
+        custom_diag_file=str(tmp_path / "custom.json"),
+    )
+    logs = []
+    patient = subject.parse_patient_from_event(
+        "Е 5 л АТ 89781543455", "", logger=logs.append
+    )
+    assert patient is not None
+    assert patient["name"].replace(".", "") == "Е"
+    assert patient["age"] == 5
+    assert patient["diagnosis_raw"].lower() == "ат"
+    assert patient["needs_name_review"] is True
+    assert patient["is_unknown_diag"] is False
+    assert any("НА УТОЧНЕНИЕ" in m for m in logs)
+    assert not any("ИГНОРИРОВАНО" in m and "короткое" in m.lower() for m in logs)
 
 
 def test_diagnosis_fallbacks_work_without_a_configured_map(tmp_path):

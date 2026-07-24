@@ -22,7 +22,7 @@ def resource_path(relative_path):
 
 
 def load_config():
-    config = {"last_dir": "", "last_monday": None}
+    config = {"last_dir": "", "last_monday": None, "export_admissions": False}
     if os.path.exists(OLD_CONFIG_FILE):
         try:
             with open(OLD_CONFIG_FILE, "r", encoding="utf-8") as f:
@@ -51,10 +51,11 @@ def load_config():
             config["last_monday"] = None
     else:
         config["last_monday"] = None
+    config["export_admissions"] = bool(config.get("export_admissions", False))
     return config
 
 
-def save_config(last_dir=None, last_monday=None):
+def save_config(last_dir=None, last_monday=None, export_admissions=None):
     config = {}
     if os.path.exists(CONFIG_FILE):
         try:
@@ -72,6 +73,8 @@ def save_config(last_dir=None, last_monday=None):
             if hasattr(last_monday, "isoformat")
             else last_monday
         )
+    if export_admissions is not None:
+        config["export_admissions"] = bool(export_admissions)
     with open(CONFIG_FILE, "w", encoding="utf-8") as f:
         json.dump(config, f)
 
