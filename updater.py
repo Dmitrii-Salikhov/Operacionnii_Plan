@@ -163,6 +163,39 @@ def _asset_download_url(asset):
     return asset.get("browser_download_url")
 
 
+def write_update_powershell_script(ps_script, app_dir, zip_path, sha_path):
+    """
+    Пишет .ps1 для замены файлов после выхода из приложения.
+    UTF-8 с BOM — чтобы кириллица в путях не ломала запись/чтение на Windows.
+    """
+    ps_app_dir = app_dir.replace("\\", "\\\\")
+    ps_zip = zip_path.replace("\\", "\\\\")
+    ps_sha = sha_path.replace("\\", "\\\\")
+    ps_exe = os.path.join(app_dir, "PlanOperaciy.exe").replace("\\", "\\\\")
+    commands = f"""
+$timeout = 50
+$proc = Get-Process -Name "PlanOperaciy" -ErrorAction SilentlyContinue
+if ($proc) {{
+    $proc | Stop-Process -Force
+    for ($i=0; $i -lt $timeout; $i++) {{
+        if (-not (Get-Process -Name "PlanOperaciy" -ErrorAction SilentlyContinue)) {{
+            break
+        }}
+        Start-Sleep -Milliseconds 100
+    }}
+}}
+Expand-Archive -Path "{ps_zip}" -DestinationPath "{ps_app_dir}" -Force
+if (Test-Path "{ps_app_dir}\\_internal\\version.txt") {{
+    Move-Item -Path "{ps_app_dir}\\_internal\\version.txt" -Destination "{ps_app_dir}\\version.txt" -Force
+}}
+Start-Process -FilePath "{ps_exe}"
+Remove-Item -Path "{ps_zip}" -Force -ErrorAction SilentlyContinue
+Remove-Item -Path "{ps_sha}" -Force -ErrorAction SilentlyContinue
+"""
+    with open(ps_script, "w", encoding="utf-8-sig") as f:
+        f.write(commands)
+
+
 def perform_update(app_dir, release=None):
     if release is None:
         release = fetch_latest_release()
@@ -263,33 +296,7 @@ def perform_update(app_dir, release=None):
         return
 
     ps_script = os.path.join(tmp_dir, "update_plan.ps1")
-    ps_app_dir = app_dir.replace("\\", "\\\\")
-    ps_zip = zip_path.replace("\\", "\\\\")
-    ps_sha = sha_path.replace("\\", "\\\\")
-    ps_exe = os.path.join(app_dir, "PlanOperaciy.exe").replace("\\", "\\\\")
-
-    commands = f"""
-$timeout = 50
-$proc = Get-Process -Name "PlanOperaciy" -ErrorAction SilentlyContinue
-if ($proc) {{
-    $proc | Stop-Process -Force
-    for ($i=0; $i -lt $timeout; $i++) {{
-        if (-not (Get-Process -Name "PlanOperaciy" -ErrorAction SilentlyContinue)) {{
-            break
-        }}
-        Start-Sleep -Milliseconds 100
-    }}
-}}
-Expand-Archive -Path "{ps_zip}" -DestinationPath "{ps_app_dir}" -Force
-if (Test-Path "{ps_app_dir}\\_internal\\version.txt") {{
-    Move-Item -Path "{ps_app_dir}\\_internal\\version.txt" -Destination "{ps_app_dir}\\version.txt" -Force
-}}
-Start-Process -FilePath "{ps_exe}"
-Remove-Item -Path "{ps_zip}" -Force -ErrorAction SilentlyContinue
-Remove-Item -Path "{ps_sha}" -Force -ErrorAction SilentlyContinue
-"""
-    with open(ps_script, "w", encoding="ascii") as f:
-        f.write(commands)
+    write_update_powershell_script(ps_script, app_dir, zip_path, sha_path)
 
     try:
         creationflags = (

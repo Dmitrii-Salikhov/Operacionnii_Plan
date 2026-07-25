@@ -157,3 +157,17 @@ def test_perform_update_rejects_invalid_or_mismatched_checksum(tmp_path, monkeyp
     monkeypatch.setattr(updater, "download_with_retries", write_mismatched_checksum)
     updater.perform_update("/unused", release=release)
     assert "не совпала" in messages[-1][1]
+
+
+def test_write_update_powershell_script_supports_cyrillic_paths(tmp_path):
+    script = tmp_path / "update_plan.ps1"
+    app_dir = str(tmp_path / "Документы" / "ПланОпераций")
+    zip_path = str(tmp_path / "архив.zip")
+    sha_path = str(tmp_path / "сумма.sha256")
+    updater.write_update_powershell_script(str(script), app_dir, zip_path, sha_path)
+    raw = script.read_bytes()
+    assert raw.startswith(b"\xef\xbb\xbf")  # UTF-8 BOM
+    text = raw.decode("utf-8-sig")
+    assert "ПланОпераций" in text
+    assert "PlanOperaciy.exe" in text
+    assert "Expand-Archive" in text
