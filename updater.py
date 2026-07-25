@@ -28,6 +28,9 @@ USER_AGENT = "PlanOperaciy-Updater"
 
 def get_base_dir():
     """Возвращает папку, где находится исполняемый файл (exe или .py)."""
+    env = os.environ.get("PLAN_BASE_DIR")
+    if env:
+        return env
     if getattr(sys, "frozen", False):
         return os.path.dirname(sys.executable)
     return os.path.dirname(os.path.abspath(sys.argv[0]))
@@ -167,44 +170,52 @@ def write_update_powershell_script(ps_script, app_dir, zip_path, sha_path):
     """
     Пишет .ps1 для замены файлов после выхода из приложения.
     UTF-8 с BOM — чтобы кириллица в путях не ломала запись/чтение на Windows.
+    Сохраняет пользовательские файлы (calendars/credentials/token и т.п.),
+    т.к. Expand-Archive -Force не удаляет отсутствующие в zip файлы.
     """
     ps_app_dir = app_dir.replace("\\", "\\\\")
     ps_zip = zip_path.replace("\\", "\\\\")
     ps_sha = sha_path.replace("\\", "\\\\")
     ps_exe = os.path.join(app_dir, "PlanOperaciy.exe").replace("\\", "\\\\")
     commands = f"""
-$timeout = 50
-$proc = Get-Process -Name "PlanOperaciy" -ErrorAction SilentlyContinue
-if ($proc) {{
-    $proc | Stop-Process -Force
-    for ($i=0; $i -lt $timeout; $i++) {{
-        if (-not (Get-Process -Name "PlanOperaciy" -ErrorAction SilentlyContinue)) {{
-            break
-        }}
-        Start-Sleep -Milliseconds 100
-    }}
+$ErrorActionPreference = "Stop"
+$timeout = 80
+$names = @("PlanOperaciy", "PlanOperaciyBackend", "electron")
+foreach ($n in $names) {{
+    Get-Process -Name $n -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+}}
+for ($i=0; $i -lt $timeout; $i++) {{
+    $left = Get-Process -Name "PlanOperaciy" -ErrorAction SilentlyContinue
+    if (-not $left) {{ break }}
+    Start-Sleep -Milliseconds 100
 }}
 Expand-Archive -Path "{ps_zip}" -DestinationPath "{ps_app_dir}" -Force
 if (Test-Path "{ps_app_dir}\\_internal\\version.txt") {{
     Move-Item -Path "{ps_app_dir}\\_internal\\version.txt" -Destination "{ps_app_dir}\\version.txt" -Force
 }}
-Start-Process -FilePath "{ps_exe}"
+if (Test-Path "{ps_exe}") {{
+    Start-Process -FilePath "{ps_exe}"
+}}
 Remove-Item -Path "{ps_zip}" -Force -ErrorAction SilentlyContinue
 Remove-Item -Path "{ps_sha}" -Force -ErrorAction SilentlyContinue
+Remove-Item -Path $MyInvocation.MyCommand.Path -Force -ErrorAction SilentlyContinue
 """
     with open(ps_script, "w", encoding="utf-8-sig") as f:
         f.write(commands)
 
 
-def perform_update(app_dir, release=None):
+def install_update_headless(app_dir, release=None):
+    """
+    Скачивает zip+sha256, проверяет сумму, запускает PowerShell-установщик.
+    Без Tk. Возвращает dict: ok / error / restarting.
+    """
     if release is None:
         release = fetch_latest_release()
     if not release:
-        messagebox.showerror(
-            "Ошибка обновления",
-            "Не удалось получить данные о релизе.\nПроверьте интернет-соединение.",
-        )
-        return
+        return {
+            "ok": False,
+            "error": "Не удалось получить данные о релизе. Проверьте интернет.",
+        }
 
     zip_asset = find_release_asset(release, ZIP_FILENAME)
     sha_asset = find_release_asset(release, SHA256_FILENAME)
@@ -212,107 +223,93 @@ def perform_update(app_dir, release=None):
         sha_asset = find_release_asset(release, "SHA256SUMS")
 
     if not zip_asset or not _asset_download_url(zip_asset):
-        messagebox.showerror(
-            "Ошибка обновления",
-            f"В релизе нет файла {ZIP_FILENAME}.",
-        )
-        return
+        return {"ok": False, "error": f"В релизе нет файла {ZIP_FILENAME}."}
 
     if not sha_asset or not _asset_download_url(sha_asset):
-        messagebox.showerror(
-            "Ошибка обновления",
-            "В релизе нет контрольной суммы (*.sha256).\n"
-            "Обновление отменено — без проверки целостности установка небезопасна.",
-        )
-        _log("Отказ от обновления: отсутствует SHA-256 asset")
-        return
+        return {
+            "ok": False,
+            "error": "В релизе нет контрольной суммы (*.sha256). Обновление отменено.",
+        }
 
     tmp_dir = tempfile.gettempdir()
     zip_path = os.path.join(tmp_dir, ZIP_FILENAME)
     sha_path = os.path.join(tmp_dir, SHA256_FILENAME)
 
-    progress_win = tk.Toplevel()
-    progress_win.title("Обновление")
-    progress_win.geometry("320x110")
-    progress_win.resizable(False, False)
-    tk.Label(
-        progress_win,
-        text="Идёт обновление…\nСкачивание и проверка целостности.",
-        font=("Segoe UI", 10),
-    ).pack(expand=True, pady=15)
-    progress_win.update()
-
     try:
         if not download_with_retries(_asset_download_url(zip_asset), zip_path):
-            progress_win.destroy()
-            messagebox.showerror(
-                "Ошибка обновления",
-                "Не удалось скачать обновление после нескольких попыток.\n"
-                "Проверьте интернет-соединение и повторите позже.",
-            )
-            return
+            return {
+                "ok": False,
+                "error": "Не удалось скачать обновление после нескольких попыток.",
+            }
 
-        if not download_with_retries(_asset_download_url(sha_asset), sha_path, max_retries=3):
-            progress_win.destroy()
-            messagebox.showerror(
-                "Ошибка обновления",
-                "Не удалось скачать файл контрольной суммы.\nОбновление отменено.",
-            )
+        if not download_with_retries(
+            _asset_download_url(sha_asset), sha_path, max_retries=3
+        ):
             _safe_remove(zip_path)
-            return
+            return {
+                "ok": False,
+                "error": "Не удалось скачать файл контрольной суммы.",
+            }
 
         with open(sha_path, "r", encoding="utf-8", errors="ignore") as f:
             expected = parse_sha256_text(f.read())
         if not expected:
-            progress_win.destroy()
-            messagebox.showerror(
-                "Ошибка обновления",
-                "Файл контрольной суммы повреждён или имеет неизвестный формат.\n"
-                "Обновление отменено.",
-            )
             _safe_remove(zip_path)
             _safe_remove(sha_path)
-            return
+            return {
+                "ok": False,
+                "error": "Файл контрольной суммы повреждён или имеет неизвестный формат.",
+            }
 
         actual = compute_sha256(zip_path)
         if actual != expected:
-            progress_win.destroy()
-            messagebox.showerror(
-                "Ошибка обновления",
-                "Контрольная сумма архива не совпала.\n"
-                "Файл мог быть подменён или повреждён. Обновление отменено.",
-            )
             _log(f"SHA-256 mismatch: expected={expected}, actual={actual}")
             _safe_remove(zip_path)
             _safe_remove(sha_path)
-            return
+            return {
+                "ok": False,
+                "error": "Контрольная сумма архива не совпала. Обновление отменено.",
+            }
 
         _log(f"SHA-256 OK: {actual}")
     except (OSError, urllib.error.URLError, TimeoutError, ValueError, UnicodeError) as e:
-        progress_win.destroy()
-        messagebox.showerror("Ошибка обновления", f"Сбой при проверке обновления:\n{e}")
         _safe_remove(zip_path)
         _safe_remove(sha_path)
-        return
+        return {"ok": False, "error": f"Сбой при проверке обновления: {e}"}
+
+    if sys.platform != "win32":
+        return {
+            "ok": False,
+            "error": "Автоустановка доступна только на Windows. Откройте страницу релиза вручную.",
+            "html_url": release.get("html_url"),
+            "verified": True,
+            "sha256": actual,
+        }
 
     ps_script = os.path.join(tmp_dir, "update_plan.ps1")
     write_update_powershell_script(ps_script, app_dir, zip_path, sha_path)
 
     try:
-        creationflags = (
-            subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
-        )
+        creationflags = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
         subprocess.Popen(
             ["powershell.exe", "-ExecutionPolicy", "Bypass", "-File", ps_script],
             creationflags=creationflags,
         )
     except (OSError, ValueError) as e:
-        progress_win.destroy()
+        return {"ok": False, "error": f"Не удалось запустить установщик: {e}"}
+
+    return {"ok": True, "restarting": True, "sha256": actual}
+
+
+def perform_update(app_dir, release=None):
+    result = install_update_headless(app_dir, release=release)
+    if not result.get("ok"):
         messagebox.showerror(
-            "Ошибка обновления", f"Не удалось запустить установщик:\n{e}"
+            "Ошибка обновления",
+            result.get("error") or "Неизвестная ошибка обновления.",
         )
         return
-
+    # Установщик ждёт выхода процесса — как и раньше.
     sys.exit(0)
 
 

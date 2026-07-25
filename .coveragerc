@@ -7,6 +7,9 @@ omit =
     app_gui.py
     plan_generator.py
     google_calendar.py
+    bridge/*
+    desktop/*
+    scripts/*
 
 [report]
 fail_under = 90

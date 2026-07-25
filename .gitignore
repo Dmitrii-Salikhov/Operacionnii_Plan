@@ -5,6 +5,11 @@
 dist/
 build/
 *.spec
+desktop/dist/
+desktop/release/
+desktop/backend/
+desktop/node_modules/
+.tools/
 
 # Excel-файлы с данными пациентов
 *.xlsx

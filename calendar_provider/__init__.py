@@ -3,6 +3,7 @@
 from datetime import date
 from typing import List
 
+from calendar_provider.config import load_calendar_ids, save_calendar_ids
 from calendar_provider.factory import get_backend
 from calendar_provider.protocol import CalendarBackend
 from calendar_provider.types import CalendarEvent
@@ -33,3 +34,17 @@ def fetch_week_events(monday_date: date) -> List[CalendarEvent]:
 def reauthorize() -> None:
     """Повторная авторизация текущего провайдера."""
     active_backend().reauthorize()
+
+
+__all__ = [
+    "CalendarBackend",
+    "CalendarEvent",
+    "active_backend",
+    "calendar_display_name",
+    "calendar_setup_help",
+    "fetch_week_events",
+    "is_calendar_configured",
+    "load_calendar_ids",
+    "reauthorize",
+    "save_calendar_ids",
+]

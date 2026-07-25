@@ -22,7 +22,12 @@ def resource_path(relative_path):
 
 
 def load_config():
-    config = {"last_dir": "", "last_monday": None, "export_admissions": False}
+    config = {
+        "last_dir": "",
+        "last_monday": None,
+        "export_admissions": False,
+        "ui_appearance": "Dark",
+    }
     if os.path.exists(OLD_CONFIG_FILE):
         try:
             with open(OLD_CONFIG_FILE, "r", encoding="utf-8") as f:
@@ -52,10 +57,14 @@ def load_config():
     else:
         config["last_monday"] = None
     config["export_admissions"] = bool(config.get("export_admissions", False))
+    appearance = str(config.get("ui_appearance") or "Dark")
+    if appearance not in ("Light", "Dark", "System"):
+        appearance = "Dark"
+    config["ui_appearance"] = appearance
     return config
 
 
-def save_config(last_dir=None, last_monday=None, export_admissions=None):
+def save_config(last_dir=None, last_monday=None, export_admissions=None, ui_appearance=None):
     config = {}
     if os.path.exists(CONFIG_FILE):
         try:
@@ -75,6 +84,8 @@ def save_config(last_dir=None, last_monday=None, export_admissions=None):
         )
     if export_admissions is not None:
         config["export_admissions"] = bool(export_admissions)
+    if ui_appearance is not None:
+        config["ui_appearance"] = ui_appearance
     with open(CONFIG_FILE, "w", encoding="utf-8") as f:
         json.dump(config, f)
 

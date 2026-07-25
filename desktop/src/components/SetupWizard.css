@@ -1,0 +1,56 @@
+.wizard {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.wizard__checks {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.wizard__check {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 10px;
+  color: var(--text-muted);
+  font-size: 0.8rem;
+}
+
+.wizard__check--ok {
+  border-color: color-mix(in srgb, var(--ok) 55%, var(--border));
+  color: #c8f5df;
+  background: color-mix(in srgb, var(--ok) 14%, transparent);
+}
+
+.wizard__steps {
+  margin: 0;
+  padding: 10px 10px 10px 28px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-input, #0a0c10);
+  color: var(--text-muted);
+  font-size: 0.85rem;
+  line-height: 1.45;
+}
+
+.wizard__steps li {
+  margin-bottom: 6px;
+}
+
+.wizard__path {
+  margin: 0;
+  font-size: 0.78rem;
+  color: var(--text-muted);
+}
+
+.wizard__path code {
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  word-break: break-all;
+}
+
+.modal__actions--wrap {
+  justify-content: flex-start;
+}

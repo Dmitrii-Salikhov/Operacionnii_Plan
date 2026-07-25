@@ -21,29 +21,63 @@ jobs:
         with:
           python-version: '3.10'
 
-      - name: Установка зависимостей
+      - name: Установка Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: desktop/package-lock.json
+
+      - name: Установка Python-зависимостей
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Сборка PyInstaller
-        run: pyinstaller --name PlanOperaciy --windowed --icon=hospital.ico --add-data "version.txt;." --add-data "diagnoses.json;." --add-data "diagnosis_combinations.json;." --add-data "diagnosis_aliases.json;." --add-data "room_rules.json;." --add-data "calendars.example.json;." --add-data "credentials.example.json;." --hidden-import tkcalendar --hidden-import fuzzywuzzy --hidden-import googleapiclient.discovery --hidden-import google.auth.transport.requests --hidden-import google_auth_oauthlib.flow --hidden-import gui --hidden-import gui.app --hidden-import updater --hidden-import certifi --hidden-import room_rules --hidden-import calendar_provider --hidden-import calendar_provider.google_backend plan_generator.py
+      - name: Сборка Python backend (sidecar)
+        run: >
+          pyinstaller --name PlanOperaciyBackend --noconsole
+          --add-data "version.txt;."
+          --add-data "diagnoses.json;."
+          --add-data "diagnosis_combinations.json;."
+          --add-data "diagnosis_aliases.json;."
+          --add-data "room_rules.json;."
+          --add-data "calendars.example.json;."
+          --add-data "credentials.example.json;."
+          --hidden-import fuzzywuzzy
+          --hidden-import googleapiclient.discovery
+          --hidden-import google.auth.transport.requests
+          --hidden-import google_auth_oauthlib.flow
+          --hidden-import certifi
+          --hidden-import room_rules
+          --hidden-import calendar_provider
+          --hidden-import calendar_provider.google_backend
+          --hidden-import bridge
+          --hidden-import bridge.handlers
+          bridge/cli.py
 
-      - name: Копирование служебных файлов в корень дистрибутива
-        run: |
-          copy version.txt dist\PlanOperaciy\version.txt
-          copy diagnoses.json dist\PlanOperaciy\diagnoses.json
-          copy diagnosis_combinations.json dist\PlanOperaciy\diagnosis_combinations.json
-          copy diagnosis_aliases.json dist\PlanOperaciy\diagnosis_aliases.json
-          copy room_rules.json dist\PlanOperaciy\room_rules.json
-          copy calendars.example.json dist\PlanOperaciy\calendars.example.json
-          copy credentials.example.json dist\PlanOperaciy\credentials.example.json
-        shell: cmd
-
-      - name: Создать ZIP-архив и SHA-256
+      - name: Подготовка desktop/backend
         shell: pwsh
         run: |
-          Set-Location dist\PlanOperaciy
+          New-Item -ItemType Directory -Force -Path desktop\backend | Out-Null
+          Copy-Item -Recurse -Force dist\PlanOperaciyBackend\* desktop\backend\
+          Copy-Item version.txt,diagnoses.json,diagnosis_combinations.json,diagnosis_aliases.json,room_rules.json,calendars.example.json,credentials.example.json desktop\backend\ -Force
+
+      - name: npm install & build Electron
+        working-directory: desktop
+        run: |
+          npm install
+          npm run dist:win
+
+      - name: Служебные файлы рядом с exe
+        shell: pwsh
+        run: |
+          $out = "desktop\release\win-unpacked"
+          Copy-Item version.txt,calendars.example.json,credentials.example.json,diagnoses.json,diagnosis_combinations.json,diagnosis_aliases.json,room_rules.json,MIGRATION.md,RELEASE_NOTES.md $out -Force
+
+      - name: ZIP + SHA-256
+        shell: pwsh
+        run: |
+          Set-Location desktop\release\win-unpacked
           7z a ..\PlanOperaciy-Windows.zip *
           Set-Location ..
           $hash = (Get-FileHash PlanOperaciy-Windows.zip -Algorithm SHA256).Hash.ToLower()
@@ -54,8 +88,8 @@ jobs:
         uses: softprops/action-gh-release@v3
         with:
           files: |
-            dist/PlanOperaciy-Windows.zip
-            dist/PlanOperaciy-Windows.zip.sha256
+            desktop/release/PlanOperaciy-Windows.zip
+            desktop/release/PlanOperaciy-Windows.zip.sha256
           name: "Release ${{ github.ref_name }}"
           body_path: RELEASE_NOTES.md
         env:

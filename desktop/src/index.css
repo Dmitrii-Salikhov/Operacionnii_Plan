@@ -1,0 +1,87 @@
+:root,
+[data-theme='dark'] {
+  --bg: #0c0e12;
+  --bg-elevated: #141820;
+  --bg-panel: #10141c;
+  --bg-input: #0a0c10;
+  --border: #232a36;
+  --text: #e8ecf1;
+  --text-muted: #8b95a8;
+  --accent: #3d9cf0;
+  --accent-dim: #1a4a73;
+  --danger: #e85d5d;
+  --ok: #3ecf8e;
+  --warning: #e6a23c;
+  --font-sans: 'Segoe UI', 'Segoe UI Variable', system-ui, -apple-system, 'Helvetica Neue',
+    sans-serif;
+  --font-mono: 'Cascadia Mono', 'Consolas', 'Segoe UI Mono', ui-monospace, monospace;
+  --radius: 4px;
+  --toolbar-h: 44px;
+}
+
+[data-theme='light'] {
+  --bg: #f3f5f8;
+  --bg-elevated: #ffffff;
+  --bg-panel: #eef1f5;
+  --bg-input: #ffffff;
+  --border: #cfd6e0;
+  --text: #1a2230;
+  --text-muted: #5b667a;
+  --accent: #1f6fbf;
+  --accent-dim: #d6e8f8;
+  --danger: #c62828;
+  --ok: #1b7a4a;
+  --warning: #b36b00;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  margin: 0;
+  height: 100%;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-sans);
+  font-size: 13px;
+  -webkit-font-smoothing: antialiased;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+  color: inherit;
+}
+
+button {
+  cursor: pointer;
+}
+
+button:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--accent) 80%, white);
+  outline-offset: 1px;
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--border) 80%, #000);
+  border-radius: 5px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}

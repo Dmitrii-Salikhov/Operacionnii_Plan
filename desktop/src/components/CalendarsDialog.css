@@ -1,0 +1,73 @@
+.calcfg {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.calcfg__empty {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 0.85rem;
+}
+
+.calcfg__id {
+  font-family: var(--font-mono);
+  font-size: 0.8rem;
+  word-break: break-all;
+}
+
+.calcfg__actions {
+  display: flex;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.calcfg__toggle {
+  align-self: flex-start;
+}
+
+.calcfg__steps {
+  margin: 0;
+  padding: 10px 10px 10px 28px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #0a0c10;
+  color: var(--text-muted);
+  font-size: 0.85rem;
+  line-height: 1.45;
+}
+
+.calcfg__steps li {
+  margin-bottom: 6px;
+}
+
+.calcfg__steps li:last-child {
+  margin-bottom: 0;
+}
+
+.cal-stats {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: 0.8rem;
+  color: var(--text-muted);
+}
+
+.cal-stats li {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 3px 0;
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+}
+
+.cal-stats li:last-child {
+  border-bottom: none;
+}
+
+.cal-stats__count {
+  color: var(--text);
+  font-weight: 600;
+}

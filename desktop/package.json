@@ -1,0 +1,65 @@
+{
+  "name": "plan-operaciy",
+  "version": "1.1.0",
+  "private": true,
+  "description": "План операций ЛОР — Electron UI",
+  "author": "Operacionnii_Plan",
+  "main": "electron/main.cjs",
+  "scripts": {
+    "dev": "concurrently -k \"vite\" \"wait-on http://127.0.0.1:5173 && cross-env ELECTRON_RUN_AS_NODE= PLAN_DEVTOOLS=1 VITE_DEV_SERVER_URL=http://127.0.0.1:5173 electron .\"",
+    "build": "vite build",
+    "preview": "vite preview",
+    "dist:win": "npm run build && electron-builder --win --x64 --dir",
+    "dist:dir": "npm run build && electron-builder --win --x64 --dir"
+  },
+  "dependencies": {
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0"
+  },
+  "devDependencies": {
+    "@types/react": "^19.1.2",
+    "@types/react-dom": "^19.1.2",
+    "@vitejs/plugin-react": "^4.4.1",
+    "concurrently": "^9.2.4",
+    "cross-env": "^7.0.3",
+    "electron": "^35.2.1",
+    "electron-builder": "^26.0.12",
+    "typescript": "^5.8.3",
+    "vite": "^6.3.3",
+    "wait-on": "^8.0.5"
+  },
+  "build": {
+    "appId": "com.operacionnii.plan",
+    "productName": "PlanOperaciy",
+    "copyright": "Copyright © Operacionnii_Plan",
+    "directories": {
+      "output": "release",
+      "buildResources": "build"
+    },
+    "files": [
+      "dist/**/*",
+      "electron/**/*",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "backend",
+        "to": "backend",
+        "filter": ["**/*"]
+      }
+    ],
+    "extraMetadata": {
+      "main": "electron/main.cjs"
+    },
+    "asar": true,
+    "win": {
+      "icon": "icon.ico",
+      "target": [
+        {
+          "target": "dir",
+          "arch": ["x64"]
+        }
+      ]
+    }
+  }
+}

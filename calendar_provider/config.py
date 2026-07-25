@@ -88,6 +88,9 @@ def load_calendar_ids() -> List[str]:
             else:
                 continue
             ids = _normalize_calendar_ids(ids)
+            # calendars.json exists → respect empty list (user cleared IDs)
+            if path == CALENDARS_FILE:
+                return ids
             if ids:
                 return ids
         except (OSError, json.JSONDecodeError, TypeError, ValueError) as e:
@@ -110,3 +113,35 @@ def ensure_calendars_config() -> List[str]:
         except OSError as e:
             logger.warning("Не удалось создать %s из example: %s", CALENDARS_FILE, e)
     return load_calendar_ids()
+
+
+def save_calendar_ids(calendar_ids: List[str], provider: str | None = None) -> List[str]:
+    """
+    Пишет calendars.json с нормализованным списком ID.
+    Возвращает сохранённый (отфильтрованный) список.
+    """
+    existing = _read_config_dict()
+    prov = (provider or existing.get("provider") or DEFAULT_PROVIDER)
+    prov = str(prov).strip().lower() or DEFAULT_PROVIDER
+    if prov not in KNOWN_PROVIDERS:
+        raise ValueError(f"Неизвестный provider: {prov}")
+
+    cleaned = _normalize_calendar_ids(calendar_ids)
+    # Allow saving empty list (user clearing) but warn via return
+    raw_ids = [str(x).strip() for x in (calendar_ids or []) if str(x).strip()]
+    placeholders = [x for x in raw_ids if is_placeholder_calendar_id(x)]
+    if placeholders:
+        logger.warning("Отброшены шаблонные ID: %s", placeholders)
+
+    payload: Dict[str, Any] = {
+        "provider": prov,
+        "calendar_ids": cleaned,
+        "_comment": (
+            "Укажите email/ID календарей Google. "
+            "Файл рядом с программой; образец — calendars.example.json."
+        ),
+    }
+    with open(CALENDARS_FILE, "w", encoding="utf-8") as f:
+        json.dump(payload, f, ensure_ascii=False, indent=2)
+        f.write("\n")
+    return cleaned
