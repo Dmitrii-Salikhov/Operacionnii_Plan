@@ -111,10 +111,7 @@ class PythonBridge {
     if (!pending) return;
     this.pending.delete(id);
     if (msg.error) {
-      const detail = msg.error.traceback
-        ? `${msg.error.message}\n${msg.error.traceback}`
-        : msg.error.message || String(msg.error);
-      pending.reject(new Error(detail));
+      pending.reject(new Error(msg.error.message || String(msg.error)));
     } else {
       pending.resolve(msg.result);
     }

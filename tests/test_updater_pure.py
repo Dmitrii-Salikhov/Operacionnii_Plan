@@ -39,8 +39,26 @@ def test_current_version_and_asset_url_use_local_data(tmp_path, monkeypatch):
     (tmp_path / "version.txt").write_text("1.4.0\n", encoding="utf-8")
     monkeypatch.setattr(updater, "get_base_dir", lambda: str(tmp_path))
     assert updater.read_current_version() == "1.4.0"
-    assert updater._asset_download_url({"browser_download_url": "https://example.test/a.zip"}) == "https://example.test/a.zip"
+    good = (
+        "https://github.com/Dmitrii-Salikhov/Operacionnii_Plan/releases/download/v1/a.zip"
+    )
+    assert updater._asset_download_url({"browser_download_url": good}) == good
+    assert updater._asset_download_url({"browser_download_url": "https://evil.test/a.zip"}) is None
     assert updater._asset_download_url({}) is None
+
+
+def test_trusted_urls():
+    assert updater.is_trusted_download_url(
+        "https://github.com/Dmitrii-Salikhov/Operacionnii_Plan/releases/download/v1/x.zip"
+    )
+    assert not updater.is_trusted_download_url("http://github.com/Dmitrii-Salikhov/Operacionnii_Plan/x")
+    assert not updater.is_trusted_download_url(
+        "https://github.com/other/Operacionnii_Plan/releases/download/v1/x.zip"
+    )
+    assert updater.is_trusted_release_page_url(
+        "https://github.com/Dmitrii-Salikhov/Operacionnii_Plan/releases/tag/v1.1.0"
+    )
+    assert not updater.is_trusted_release_page_url("https://evil.example/releases")
 
 
 def test_fetch_latest_release_and_download_retries_are_network_free(tmp_path, monkeypatch):
@@ -94,12 +112,17 @@ def test_perform_update_reports_missing_release_assets(monkeypatch):
     messages = []
     monkeypatch.setattr(updater.messagebox, "showerror", lambda *args: messages.append(args))
     updater.perform_update("/unused", release={"assets": []})
+    good = "https://github.com/Dmitrii-Salikhov/Operacionnii_Plan/releases/download/v1/PlanOperaciy-Windows.zip"
     updater.perform_update(
         "/unused",
-        release={"assets": [{"name": updater.ZIP_FILENAME, "browser_download_url": "zip"}]},
+        release={
+            "assets": [
+                {"name": updater.ZIP_FILENAME, "browser_download_url": good},
+            ]
+        },
     )
     assert len(messages) == 2
-    assert "нет файла" in messages[0][1]
+    assert "нет файла" in messages[0][1] or "контрольной суммы" in messages[0][1]
     assert "контрольной суммы" in messages[1][1]
 
 
@@ -129,11 +152,13 @@ def test_perform_update_rejects_invalid_or_mismatched_checksum(tmp_path, monkeyp
         def pack(self, **_):
             pass
 
+    base = "https://github.com/Dmitrii-Salikhov/Operacionnii_Plan/releases/download/v1/"
     release = {
+        "html_url": "https://github.com/Dmitrii-Salikhov/Operacionnii_Plan/releases/tag/v1",
         "assets": [
-            {"name": updater.ZIP_FILENAME, "browser_download_url": "zip"},
-            {"name": updater.SHA256_FILENAME, "browser_download_url": "sha"},
-        ]
+            {"name": updater.ZIP_FILENAME, "browser_download_url": base + "PlanOperaciy-Windows.zip"},
+            {"name": updater.SHA256_FILENAME, "browser_download_url": base + "PlanOperaciy-Windows.zip.sha256"},
+        ],
     }
     monkeypatch.setattr(updater.tempfile, "gettempdir", lambda: str(tmp_path))
     monkeypatch.setattr(updater.tk, "Toplevel", Window)
@@ -142,7 +167,10 @@ def test_perform_update_rejects_invalid_or_mismatched_checksum(tmp_path, monkeyp
 
     def write_invalid_checksum(_, path, **kwargs):
         path = __import__("pathlib").Path(path)
-        path.write_text("not a checksum", encoding="utf-8") if path.suffix == ".sha256" else path.write_bytes(b"zip")
+        if path.suffix == ".sha256":
+            path.write_text("not a checksum", encoding="utf-8")
+        else:
+            path.write_bytes(b"zip")
         return True
 
     monkeypatch.setattr(updater, "download_with_retries", write_invalid_checksum)
@@ -151,12 +179,31 @@ def test_perform_update_rejects_invalid_or_mismatched_checksum(tmp_path, monkeyp
 
     def write_mismatched_checksum(_, path, **kwargs):
         path = __import__("pathlib").Path(path)
-        path.write_text("0" * 64, encoding="utf-8") if path.suffix == ".sha256" else path.write_bytes(b"zip")
+        if path.suffix == ".sha256":
+            path.write_text("0" * 64, encoding="utf-8")
+        else:
+            path.write_bytes(b"zip")
         return True
 
     monkeypatch.setattr(updater, "download_with_retries", write_mismatched_checksum)
     updater.perform_update("/unused", release=release)
     assert "не совпала" in messages[-1][1]
+
+
+def test_write_update_cmd_script_supports_cyrillic_paths(tmp_path):
+    script = tmp_path / "update_plan.cmd"
+    app_dir = str(tmp_path / "Документы" / "ПланОпераций")
+    zip_path = str(tmp_path / "архив.zip")
+    sha_path = str(tmp_path / "сумма.sha256")
+    updater.write_update_cmd_script(str(script), app_dir, zip_path, extra_cleanup=[sha_path])
+    raw = script.read_bytes()
+    assert raw.startswith(b"\xef\xbb\xbf")  # UTF-8 BOM
+    text = raw.decode("utf-8-sig")
+    assert "ПланОпераций" in text
+    assert "PlanOperaciy.exe" in text
+    assert "tar -xf" in text
+    assert "ExecutionPolicy" not in text
+    assert "Bypass" not in text
 
 
 def test_write_update_powershell_script_supports_cyrillic_paths(tmp_path):
@@ -166,8 +213,7 @@ def test_write_update_powershell_script_supports_cyrillic_paths(tmp_path):
     sha_path = str(tmp_path / "сумма.sha256")
     updater.write_update_powershell_script(str(script), app_dir, zip_path, sha_path)
     raw = script.read_bytes()
-    assert raw.startswith(b"\xef\xbb\xbf")  # UTF-8 BOM
+    assert raw.startswith(b"\xef\xbb\xbf")
     text = raw.decode("utf-8-sig")
-    assert "ПланОпераций" in text
-    assert "PlanOperaciy.exe" in text
-    assert "Expand-Archive" in text
+    assert "cmd.exe" in text
+    assert (tmp_path / "update_plan.cmd").exists()

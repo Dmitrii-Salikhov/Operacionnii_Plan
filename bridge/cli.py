@@ -46,8 +46,6 @@ def main() -> int:
             _write({"id": req_id, "result": result})
         except Exception as e:
             tb = traceback.format_exc()
-            # Keep UI payload short; full traceback stays in stderr for logs
-            short_tb = "\n".join(tb.strip().splitlines()[-6:])
             sys.stderr.write(tb)
             sys.stderr.flush()
             _write(
@@ -55,7 +53,6 @@ def main() -> int:
                     "id": req_id,
                     "error": {
                         "message": str(e),
-                        "traceback": short_tb,
                     },
                 }
             )

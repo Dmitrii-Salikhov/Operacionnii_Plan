@@ -53,6 +53,7 @@ jobs:
           --hidden-import calendar_provider.google_backend
           --hidden-import bridge
           --hidden-import bridge.handlers
+          --hidden-import secure_fs
           bridge/cli.py
 
       - name: Подготовка desktop/backend

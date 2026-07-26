@@ -7,9 +7,83 @@ const { PythonBridge } = require('./pythonBridge.cjs');
 let mainWindow = null;
 const bridge = new PythonBridge();
 
+/** Paths allowed for shell.openPath (session allowlist). */
+const allowedOpenPaths = new Set();
+
+const GITHUB_REPO_PATH = '/Dmitrii-Salikhov/Operacionnii_Plan/';
+
+/** Must stay in sync with bridge.handlers.HANDLERS */
+const ALLOWED_RPC = new Set([
+  'ping',
+  'config.get',
+  'config.save',
+  'calendar.status',
+  'calendar.list',
+  'calendar.set_ids',
+  'calendar.fetch_week',
+  'calendar.reauthorize',
+  'source.set_excel',
+  'plan.prepare',
+  'plan.export',
+  'phones.extract',
+  'surgeons.get',
+  'surgeons.save',
+  'diag.options',
+  'diag.export',
+  'diag.import',
+  'diag.save_one',
+  'log.tail',
+  'updates.check',
+  'updates.install',
+  'setup.status',
+  'setup.ensure_files',
+]);
+
 const gotLock = app.requestSingleInstanceLock();
 if (!gotLock) {
   app.quit();
+}
+
+function rememberPath(filePath) {
+  if (!filePath) return;
+  try {
+    const resolved = path.resolve(filePath);
+    allowedOpenPaths.add(resolved);
+    allowedOpenPaths.add(path.dirname(resolved));
+  } catch {
+    // ignore
+  }
+}
+
+function isPathAllowed(filePath) {
+  let resolved;
+  try {
+    resolved = path.resolve(String(filePath));
+  } catch {
+    return false;
+  }
+  if (allowedOpenPaths.has(resolved)) return true;
+  const root = path.resolve(bridge.projectRoot());
+  const rel = path.relative(root, resolved);
+  if (rel && !rel.startsWith('..') && !path.isAbsolute(rel)) return true;
+  // Allow opening a directory that is an ancestor of an allowed file
+  for (const allowed of allowedOpenPaths) {
+    const r = path.relative(resolved, allowed);
+    if (r && !r.startsWith('..') && !path.isAbsolute(r)) return true;
+  }
+  return false;
+}
+
+function isTrustedExternalUrl(url) {
+  let parsed;
+  try {
+    parsed = new URL(String(url));
+  } catch {
+    return false;
+  }
+  if (parsed.protocol !== 'https:') return false;
+  if (parsed.hostname.toLowerCase() !== 'github.com') return false;
+  return parsed.pathname.startsWith(GITHUB_REPO_PATH);
 }
 
 function applyCsp() {
@@ -38,6 +112,7 @@ function createWindow() {
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
+      webSecurity: true,
     },
     show: false,
   });
@@ -56,6 +131,13 @@ function createWindow() {
     mainWindow.loadFile(path.join(__dirname, '..', 'dist', 'index.html'));
   }
 
+  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+    if (isTrustedExternalUrl(url)) {
+      shell.openExternal(url);
+    }
+    return { action: 'deny' };
+  });
+
   mainWindow.on('closed', () => {
     mainWindow = null;
   });
@@ -63,7 +145,11 @@ function createWindow() {
 
 function registerIpc() {
   ipcMain.handle('bridge:rpc', async (_e, method, params) => {
-    return bridge.rpc(String(method), params || {});
+    const name = String(method || '');
+    if (!ALLOWED_RPC.has(name)) {
+      throw new Error(`RPC method not allowed: ${name}`);
+    }
+    return bridge.rpc(name, params || {});
   });
 
   ipcMain.handle('bridge:status', async () => {
@@ -93,6 +179,7 @@ function registerIpc() {
       filters: [{ name: 'Excel', extensions: ['xlsx', 'xls'] }],
     });
     if (res.canceled || !res.filePaths[0]) return null;
+    rememberPath(res.filePaths[0]);
     return res.filePaths[0];
   });
 
@@ -103,6 +190,7 @@ function registerIpc() {
       filters: [{ name: 'JSON', extensions: ['json'] }],
     });
     if (res.canceled || !res.filePaths[0]) return null;
+    rememberPath(res.filePaths[0]);
     return res.filePaths[0];
   });
 
@@ -113,6 +201,7 @@ function registerIpc() {
       filters: [{ name: 'Excel', extensions: ['xlsx'] }],
     });
     if (res.canceled || !res.filePath) return null;
+    rememberPath(res.filePath);
     return res.filePath;
   });
 
@@ -123,19 +212,25 @@ function registerIpc() {
       filters: [{ name: 'JSON', extensions: ['json'] }],
     });
     if (res.canceled || !res.filePath) return null;
+    rememberPath(res.filePath);
     return res.filePath;
   });
 
   ipcMain.handle('shell:openPath', async (_e, filePath) => {
+    if (!isPathAllowed(filePath)) {
+      throw new Error('Путь не разрешён для открытия');
+    }
     return shell.openPath(String(filePath));
   });
 
   ipcMain.handle('shell:openExternal', async (_e, url) => {
+    if (!isTrustedExternalUrl(url)) {
+      throw new Error('URL не разрешён для открытия');
+    }
     await shell.openExternal(String(url));
   });
 
   ipcMain.handle('app:quitAfterUpdate', async () => {
-    // Give PowerShell a moment to attach, then exit so Expand-Archive can run.
     setTimeout(() => {
       try {
         bridge.stop();
@@ -151,9 +246,12 @@ function registerIpc() {
 app.whenReady().then(async () => {
   applyCsp();
   registerIpc();
+  rememberPath(bridge.projectRoot());
   createWindow();
   try {
     await bridge.ensureStarted();
+    const st = await bridge.rpc('setup.status', {});
+    if (st && st.base_dir) rememberPath(st.base_dir);
   } catch (e) {
     console.error('Failed to start Python bridge', e);
   }

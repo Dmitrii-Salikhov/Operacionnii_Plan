@@ -52,10 +52,15 @@ def test_valid_and_refreshed_credentials_build_service(tmp_path, monkeypatch):
 
     refreshed = RefreshableCredentials()
     monkeypatch.setattr(google_cal.pickle, "load", lambda _: refreshed)
+    monkeypatch.setattr(google_cal.pickle, "dumps", lambda credentials: b"pickled")
     dumped = []
-    monkeypatch.setattr(google_cal.pickle, "dump", lambda credentials, _: dumped.append(credentials))
+    monkeypatch.setattr(
+        google_cal,
+        "write_secret_bytes",
+        lambda path, data: dumped.append((path, data)),
+    )
     assert google_cal.get_google_calendar_service() is sentinel
-    assert dumped == [refreshed]
+    assert dumped == [(google_cal.TOKEN_FILE, b"pickled")]
 
 
 def test_reauthorize_requires_credentials_and_builds_service(tmp_path, monkeypatch):
@@ -81,7 +86,8 @@ def test_reauthorize_requires_credentials_and_builds_service(tmp_path, monkeypat
         "from_client_secrets_file",
         lambda path, scopes: Flow(),
     )
-    monkeypatch.setattr(google_cal.pickle, "dump", lambda *_: None)
+    monkeypatch.setattr(google_cal, "write_secret_bytes", lambda *a, **k: None)
+    monkeypatch.setattr(google_cal, "harden_secret_file", lambda *a, **k: None)
     sentinel = object()
     monkeypatch.setattr(google_cal, "build", lambda *args, **kwargs: sentinel)
     assert google_cal.reauthorize_google() is sentinel

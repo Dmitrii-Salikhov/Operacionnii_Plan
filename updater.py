@@ -4,6 +4,8 @@
 Защита:
 - TLS с проверкой сертификатов (certifi / системное хранилище)
 - проверка SHA-256 архива по файлу *.sha256 рядом с релизом на GitHub
+- загрузка только с доверенных URL GitHub репозитория
+- установка через cmd + tar (без PowerShell Bypass)
 """
 import hashlib
 import json
@@ -15,15 +17,24 @@ import sys
 import tempfile
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 import tkinter as tk
 from tkinter import messagebox
 
-GITHUB_REPO = "Dmitrii-Salikhov/Operacionnii_Plan"
+GITHUB_OWNER = "Dmitrii-Salikhov"
+GITHUB_REPO = f"{GITHUB_OWNER}/Operacionnii_Plan"
 API_URL = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
 ZIP_FILENAME = "PlanOperaciy-Windows.zip"
 SHA256_FILENAME = f"{ZIP_FILENAME}.sha256"
 USER_AGENT = "PlanOperaciy-Updater"
+ALLOWED_DOWNLOAD_HOSTS = frozenset(
+    {
+        "github.com",
+        "objects.githubusercontent.com",
+        "release-assets.githubusercontent.com",
+    }
+)
 
 
 def get_base_dir():
@@ -52,7 +63,54 @@ def _ssl_context():
         return ssl.create_default_context()
 
 
+def is_trusted_download_url(url):
+    """Разрешены только https-ссылки на артефакты нашего GitHub-репозитория."""
+    if not url or not isinstance(url, str):
+        return False
+    try:
+        parsed = urllib.parse.urlparse(url)
+    except ValueError:
+        return False
+    if parsed.scheme != "https":
+        return False
+    host = (parsed.hostname or "").lower()
+    if host not in ALLOWED_DOWNLOAD_HOSTS:
+        return False
+    if host == "github.com":
+        path = parsed.path or ""
+        return path.startswith(f"/{GITHUB_REPO}/")
+    return True
+
+
+def is_trusted_release_page_url(url):
+    """Страница релиза на GitHub нашего репозитория."""
+    if not url or not isinstance(url, str):
+        return False
+    try:
+        parsed = urllib.parse.urlparse(url)
+    except ValueError:
+        return False
+    if parsed.scheme != "https":
+        return False
+    if (parsed.hostname or "").lower() != "github.com":
+        return False
+    path = parsed.path or ""
+    return path.startswith(f"/{GITHUB_REPO}/releases")
+
+
 def _http_get(url, timeout=15):
+    """GET только с API/ассетов нашего GitHub-репозитория."""
+    try:
+        parsed = urllib.parse.urlparse(url)
+    except ValueError as e:
+        raise ValueError(f"Untrusted URL blocked: {url}") from e
+    if parsed.scheme != "https":
+        raise ValueError(f"Untrusted URL blocked: {url}")
+    host = (parsed.hostname or "").lower()
+    path = parsed.path or ""
+    api_ok = host == "api.github.com" and path.startswith(f"/repos/{GITHUB_REPO}/")
+    if not api_ok and not is_trusted_download_url(url):
+        raise ValueError(f"Untrusted URL blocked: {url}")
     req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
     with urllib.request.urlopen(req, timeout=timeout, context=_ssl_context()) as resp:
         return resp.read()
@@ -163,50 +221,74 @@ def download_with_retries(url, dest_path, max_retries=7, timeout=60):
 
 
 def _asset_download_url(asset):
-    return asset.get("browser_download_url")
+    url = asset.get("browser_download_url")
+    if url and not is_trusted_download_url(url):
+        _log(f"Отклонён недоверенный URL ассета: {url}")
+        return None
+    return url
+
+
+def write_update_cmd_script(cmd_script, app_dir, zip_path, extra_cleanup=None):
+    """
+    Пишет .cmd установщик: ждёт выхода приложения, распаковывает zip через tar,
+    перезапускает exe. Без PowerShell Bypass.
+    """
+    cleanup = list(extra_cleanup or [])
+
+    def set_var(name, value):
+        safe = str(value).replace('"', "")
+        return f'set "{name}={safe}"'
+
+    lines = [
+        "@echo off",
+        "chcp 65001 >nul",
+        "setlocal",
+        set_var("APPDIR", app_dir),
+        set_var("ZIP", zip_path),
+        "taskkill /F /IM PlanOperaciy.exe /T >nul 2>&1",
+        "taskkill /F /IM PlanOperaciyBackend.exe /T >nul 2>&1",
+        "set /a i=0",
+        ":waitloop",
+        'tasklist /FI "IMAGENAME eq PlanOperaciy.exe" | find /I "PlanOperaciy.exe" >nul',
+        "if errorlevel 1 goto extract",
+        "timeout /t 1 /nobreak >nul",
+        "set /a i+=1",
+        "if %i% LSS 80 goto waitloop",
+        ":extract",
+        'tar -xf "%ZIP%" -C "%APPDIR%"',
+        'if exist "%APPDIR%\\_internal\\version.txt" (',
+        '  move /Y "%APPDIR%\\_internal\\version.txt" "%APPDIR%\\version.txt" >nul',
+        ")",
+        'if exist "%APPDIR%\\PlanOperaciy.exe" (',
+        '  start "" "%APPDIR%\\PlanOperaciy.exe"',
+        ")",
+        'del /F /Q "%ZIP%" >nul 2>&1',
+    ]
+    for path in cleanup:
+        safe = str(path).replace('"', "")
+        lines.append(f'del /F /Q "{safe}" >nul 2>&1')
+    lines.append('del /F /Q "%~f0" >nul 2>&1')
+    text = "\r\n".join(lines) + "\r\n"
+    with open(cmd_script, "w", encoding="utf-8-sig", newline="") as f:
+        f.write(text)
 
 
 def write_update_powershell_script(ps_script, app_dir, zip_path, sha_path):
-    """
-    Пишет .ps1 для замены файлов после выхода из приложения.
-    UTF-8 с BOM — чтобы кириллица в путях не ломала запись/чтение на Windows.
-    Сохраняет пользовательские файлы (calendars/credentials/token и т.п.),
-    т.к. Expand-Archive -Force не удаляет отсутствующие в zip файлы.
-    """
-    ps_app_dir = app_dir.replace("\\", "\\\\")
-    ps_zip = zip_path.replace("\\", "\\\\")
-    ps_sha = sha_path.replace("\\", "\\\\")
-    ps_exe = os.path.join(app_dir, "PlanOperaciy.exe").replace("\\", "\\\\")
-    commands = f"""
-$ErrorActionPreference = "Stop"
-$timeout = 80
-$names = @("PlanOperaciy", "PlanOperaciyBackend", "electron")
-foreach ($n in $names) {{
-    Get-Process -Name $n -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
-}}
-for ($i=0; $i -lt $timeout; $i++) {{
-    $left = Get-Process -Name "PlanOperaciy" -ErrorAction SilentlyContinue
-    if (-not $left) {{ break }}
-    Start-Sleep -Milliseconds 100
-}}
-Expand-Archive -Path "{ps_zip}" -DestinationPath "{ps_app_dir}" -Force
-if (Test-Path "{ps_app_dir}\\_internal\\version.txt") {{
-    Move-Item -Path "{ps_app_dir}\\_internal\\version.txt" -Destination "{ps_app_dir}\\version.txt" -Force
-}}
-if (Test-Path "{ps_exe}") {{
-    Start-Process -FilePath "{ps_exe}"
-}}
-Remove-Item -Path "{ps_zip}" -Force -ErrorAction SilentlyContinue
-Remove-Item -Path "{ps_sha}" -Force -ErrorAction SilentlyContinue
-Remove-Item -Path $MyInvocation.MyCommand.Path -Force -ErrorAction SilentlyContinue
-"""
+    """Совместимость со старыми тестами: пишет cmd рядом и зеркало логики."""
+    cmd_path = os.path.splitext(ps_script)[0] + ".cmd"
+    write_update_cmd_script(cmd_path, app_dir, zip_path, extra_cleanup=[sha_path])
+    # Также оставить .ps1-заглушку без Bypass — вызывает cmd.
+    body = (
+        f'$ErrorActionPreference = "Stop"\n'
+        f'& cmd.exe /c "{cmd_path.replace(chr(34), "")}"\n'
+    )
     with open(ps_script, "w", encoding="utf-8-sig") as f:
-        f.write(commands)
+        f.write(body)
 
 
 def install_update_headless(app_dir, release=None):
     """
-    Скачивает zip+sha256, проверяет сумму, запускает PowerShell-установщик.
+    Скачивает zip + sha256, проверяет сумму, запускает cmd-установщик.
     Без Tk. Возвращает dict: ok / error / restarting.
     """
     if release is None:
@@ -216,6 +298,10 @@ def install_update_headless(app_dir, release=None):
             "ok": False,
             "error": "Не удалось получить данные о релизе. Проверьте интернет.",
         }
+
+    html_url = release.get("html_url")
+    if html_url and not is_trusted_release_page_url(html_url):
+        return {"ok": False, "error": "Недоверенный URL страницы релиза."}
 
     zip_asset = find_release_asset(release, ZIP_FILENAME)
     sha_asset = find_release_asset(release, SHA256_FILENAME)
@@ -281,19 +367,24 @@ def install_update_headless(app_dir, release=None):
         return {
             "ok": False,
             "error": "Автоустановка доступна только на Windows. Откройте страницу релиза вручную.",
-            "html_url": release.get("html_url"),
+            "html_url": html_url if is_trusted_release_page_url(html_url or "") else None,
             "verified": True,
             "sha256": actual,
         }
 
-    ps_script = os.path.join(tmp_dir, "update_plan.ps1")
-    write_update_powershell_script(ps_script, app_dir, zip_path, sha_path)
+    cmd_script = os.path.join(tmp_dir, "update_plan.cmd")
+    write_update_cmd_script(cmd_script, app_dir, zip_path, extra_cleanup=[sha_path])
 
     try:
-        creationflags = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
+        creationflags = 0
+        if sys.platform == "win32":
+            creationflags = subprocess.CREATE_NO_WINDOW | getattr(
+                subprocess, "DETACHED_PROCESS", 0
+            )
         subprocess.Popen(
-            ["powershell.exe", "-ExecutionPolicy", "Bypass", "-File", ps_script],
+            ["cmd.exe", "/c", cmd_script],
             creationflags=creationflags,
+            close_fds=True,
         )
     except (OSError, ValueError) as e:
         return {"ok": False, "error": f"Не удалось запустить установщик: {e}"}

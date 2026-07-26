@@ -346,6 +346,13 @@ export default function App() {
   }
 
   async function onInstallUpdate() {
+    if (
+      !window.confirm(
+        'Скачать и установить обновление?\nАрхив будет проверен по SHA-256. Приложение перезапустится.',
+      )
+    ) {
+      return;
+    }
     setBusy(true);
     try {
       const res = await rpc<{ ok: boolean; error?: string; restarting?: boolean }>(
@@ -355,7 +362,7 @@ export default function App() {
         pushLog(res.error || 'Ошибка установки обновления', 'error');
         return;
       }
-      pushLog('Обновление скачано и проверено (SHA-256). Перезапуск…', 'success');
+      pushLog('Обновление проверено (SHA-256). Перезапуск…', 'success');
       await api().quitAfterUpdate();
     } catch (e) {
       pushError(e);
@@ -764,7 +771,7 @@ export default function App() {
             </p>
           ) : updateInfo.update_available ? (
             <p className="status" style={{ color: 'var(--ok)' }}>
-              Доступна новая версия (установка с проверкой SHA-256).
+              Доступна новая версия (проверка SHA-256).
             </p>
           ) : (
             <p className="status">У вас актуальная версия.</p>

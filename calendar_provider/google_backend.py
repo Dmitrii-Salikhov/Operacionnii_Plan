@@ -15,6 +15,7 @@ from googleapiclient.errors import HttpError
 from calendar_provider.config import ensure_calendars_config
 from calendar_provider.types import CalendarEvent
 from constants import CALENDARS_EXAMPLE_FILE, CALENDARS_FILE, CREDENTIALS_FILE
+from secure_fs import harden_secret_file, write_secret_bytes
 
 SCOPES = ["https://www.googleapis.com/auth/calendar.readonly"]
 TOKEN_FILE = "token.pickle"
@@ -37,8 +38,11 @@ def get_google_calendar_service():
                 return reauthorize_google()
         else:
             return reauthorize_google()
-        with open(TOKEN_FILE, "wb") as token:
-            pickle.dump(creds, token)
+        write_secret_bytes(TOKEN_FILE, pickle.dumps(creds))
+        harden_secret_file(CREDENTIALS_FILE)
+    else:
+        harden_secret_file(TOKEN_FILE)
+        harden_secret_file(CREDENTIALS_FILE)
     return build("calendar", "v3", credentials=creds)
 
 
@@ -49,10 +53,10 @@ def reauthorize_google():
             f"Нет файла {CREDENTIALS_FILE}. Скопируйте credentials.example.json "
             f"в {CREDENTIALS_FILE} и заполните данными OAuth-клиента из Google Cloud."
         )
+    harden_secret_file(CREDENTIALS_FILE)
     flow = InstalledAppFlow.from_client_secrets_file(CREDENTIALS_FILE, SCOPES)
     creds = flow.run_local_server(port=0)
-    with open(TOKEN_FILE, "wb") as token:
-        pickle.dump(creds, token)
+    write_secret_bytes(TOKEN_FILE, pickle.dumps(creds))
     return build("calendar", "v3", credentials=creds)
 
 

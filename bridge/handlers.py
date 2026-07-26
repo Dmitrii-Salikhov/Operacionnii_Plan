@@ -477,6 +477,8 @@ def log_tail(params: dict) -> dict:
 
 
 def updates_check(_params: dict) -> dict:
+    from updater import is_trusted_release_page_url
+
     current = read_current_version()
     release = fetch_latest_release()
     if not release:
@@ -490,7 +492,11 @@ def updates_check(_params: dict) -> dict:
     latest = tag.lstrip("v")
     update_available = parse_version(tag) > parse_version(current)
     zip_asset = find_release_asset(release, "PlanOperaciy-Windows.zip")
+    sha_asset = find_release_asset(release, "PlanOperaciy-Windows.zip.sha256")
     html_url = release.get("html_url")
+    if html_url and not is_trusted_release_page_url(html_url):
+        html_url = None
+    can_install = bool(zip_asset) and bool(sha_asset) and sys.platform == "win32"
     return {
         "current": current,
         "latest": latest,
@@ -498,7 +504,7 @@ def updates_check(_params: dict) -> dict:
         "update_available": update_available,
         "html_url": html_url,
         "has_zip": bool(zip_asset),
-        "can_install": bool(zip_asset) and sys.platform == "win32",
+        "can_install": can_install,
     }
 
 
@@ -556,6 +562,14 @@ def setup_ensure_files(_params: dict) -> dict:
     if not os.path.exists(CREDENTIALS_FILE) and os.path.exists(CREDENTIALS_EXAMPLE_FILE):
         shutil.copyfile(CREDENTIALS_EXAMPLE_FILE, CREDENTIALS_FILE)
         created_creds = True
+    try:
+        from secure_fs import harden_secret_file
+
+        harden_secret_file(CREDENTIALS_FILE)
+        if os.path.exists("token.pickle"):
+            harden_secret_file("token.pickle")
+    except (OSError, ValueError, ImportError):
+        pass
     return {
         **setup_status({}),
         "created_credentials_stub": created_creds,
