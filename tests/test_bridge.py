@@ -53,6 +53,45 @@ def test_setup_status_reports_paths(tmp_path, monkeypatch):
     assert "calendars_ready" in status
     assert isinstance(status["steps"], list)
     assert len(status["steps"]) >= 1
+    # Windows cp125x cannot encode U+2192; keep bridge strings free of arrows.
+    blob = json.dumps(status, ensure_ascii=False)
+    assert "\u2192" not in blob
+
+
+def test_bridge_write_emits_utf8_bytes_with_arrow():
+    from bridge import cli
+
+    class Buf:
+        def __init__(self):
+            self.data = b""
+
+        def write(self, b):
+            self.data += b
+
+        def flush(self):
+            pass
+
+    class Out:
+        def __init__(self, buf):
+            self.buffer = buf
+
+        def write(self, s):
+            raise AssertionError("text write should not be used")
+
+        def flush(self):
+            pass
+
+    buf = Buf()
+    import bridge.cli as cli_mod
+
+    old = cli_mod.sys.stdout
+    cli_mod.sys.stdout = Out(buf)
+    try:
+        cli._write({"id": 1, "result": {"hint": "a \u2192 b"}})
+    finally:
+        cli_mod.sys.stdout = old
+    assert "\u2192".encode("utf-8") in buf.data
+    assert json.loads(buf.data.decode("utf-8"))["result"]["hint"] == "a \u2192 b"
 
 
 def test_as_day_map_dict_and_list():

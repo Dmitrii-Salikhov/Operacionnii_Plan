@@ -1,3 +1,9 @@
+## 1.1.2 — Windows UTF-8 bridge
+
+- Исправлена ошибка `'charmap' codec can't encode character '\u2192'` на Windows.
+- JSON-RPC bridge всегда пишет ответы в UTF-8; Electron задаёт `PYTHONUTF8` / `PYTHONIOENCODING`.
+- Стрелки `→` в текстах настройки заменены на `->`.
+
 ## 1.1.1 — Security hardening
 
 - IPC allowlist: RPC-методы, `openExternal` (только GitHub репозитория), `openPath` (base_dir + диалоги).

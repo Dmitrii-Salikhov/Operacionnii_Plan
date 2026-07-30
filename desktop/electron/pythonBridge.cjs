@@ -70,6 +70,8 @@ class PythonBridge {
       ...process.env,
       PLAN_BASE_DIR: root,
       PYTHONUNBUFFERED: '1',
+      PYTHONUTF8: '1',
+      PYTHONIOENCODING: 'utf-8',
       PYTHONPATH: root,
     };
 

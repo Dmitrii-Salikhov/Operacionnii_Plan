@@ -151,15 +151,15 @@ class GoogleCalendarBackend:
         return (
             f"Отсутствует файл {CREDENTIALS_FILE}, необходимый для доступа "
             f"к {self.display_name}.\n\n"
-            "1. Скопируйте credentials.example.json → credentials.json\n"
+            "1. Скопируйте credentials.example.json -> credentials.json\n"
             "2. Создайте OAuth client (Desktop) в Google Cloud Console\n"
-            "   APIs & Services → Credentials → Create OAuth client ID\n"
+            "   APIs & Services -> Credentials -> Create OAuth client ID\n"
             "3. Вставьте client_id и client_secret в credentials.json\n\n"
-            "Если секрет когда-либо попадал в интернет — сначала отзовите "
+            "Если секрет когда-либо попадал в интернет - сначала отзовите "
             "старый client secret в Google Cloud и создайте новый.\n\n"
             f"Календари задаются в {CALENDARS_FILE} "
             f"(образец: {CALENDARS_EXAMPLE_FILE}).\n"
-            'Поле "provider": "google" — смена провайдера позже.\n\n'
+            'Поле "provider": "google" - смена провайдера позже.\n\n'
             "Пока можно загрузить данные из Excel-файла."
         )
 

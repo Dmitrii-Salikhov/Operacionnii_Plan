@@ -541,7 +541,7 @@ def setup_status(_params: dict) -> dict:
         "steps": [
             f"Папка программы: {base}",
             (
-                f"Скопируйте {CREDENTIALS_EXAMPLE_FILE} → {CREDENTIALS_FILE} "
+                f"Скопируйте {CREDENTIALS_EXAMPLE_FILE} -> {CREDENTIALS_FILE} "
                 "и вставьте client_id / client_secret из Google Cloud (OAuth Desktop)."
             ),
             f"В «Календари…» укажите email/ID календарей (или отредактируйте {CALENDARS_FILE}).",
