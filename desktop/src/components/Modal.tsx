@@ -7,15 +7,21 @@ export function Modal({
   wide,
   children,
   onClose,
+  closeOnBackdrop = true,
 }: {
   title: string;
   hint?: string;
   wide?: boolean;
   children: ReactNode;
   onClose: () => void;
+  closeOnBackdrop?: boolean;
 }) {
   return (
-    <div className="modal-backdrop" onClick={onClose} role="presentation">
+    <div
+      className="modal-backdrop"
+      onClick={closeOnBackdrop ? onClose : undefined}
+      role="presentation"
+    >
       <div
         className={`modal${wide ? ' modal--wide' : ''}`}
         onClick={(e) => e.stopPropagation()}

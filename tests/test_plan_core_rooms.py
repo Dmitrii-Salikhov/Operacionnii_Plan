@@ -124,15 +124,18 @@ def test_assign_surgeons_reassigns_conflicting_ma_and_reports_conflicts(monkeypa
         ],
         messages,
     )
-    monkeypatch.setattr(plan_core, "SURGEON_5", {day: "Доктор" for day in range(5)})
-    monkeypatch.setattr(plan_core, "SURGEON_MA", {day: "Доктор" for day in range(5)})
-    monkeypatch.setattr(plan_core, "FORBIDDEN_MA", [])
-    # Остаётся №7 из расписания (или импортированный SURGEON_7)
-    monkeypatch.setattr(plan_core, "SURGEON_7", "Запасной Х.Х.")
+    monkeypatch.setattr(
+        plan_core.config_surgeons, "SURGEON_5", {day: "Доктор" for day in range(5)}
+    )
+    monkeypatch.setattr(
+        plan_core.config_surgeons, "SURGEON_MA", {day: "Доктор" for day in range(5)}
+    )
+    monkeypatch.setattr(plan_core.config_surgeons, "FORBIDDEN_MA", [])
+    monkeypatch.setattr(plan_core.config_surgeons, "SURGEON_7", "Запасной Х.Х.")
     generator.assign_surgeons()
     assert generator.daily_blocks[0]["MA"][0]["surgeon"] == "Запасной Х.Х."
 
-    monkeypatch.setattr(plan_core, "SURGEON_7", "Доктор")
+    monkeypatch.setattr(plan_core.config_surgeons, "SURGEON_7", "Доктор")
     generator.daily_blocks[0]["7"].append({"name": "Сидоров"})
     generator.assign_surgeons()
     assert any("Конфликт" in message for message, tag in messages if tag == "warning")

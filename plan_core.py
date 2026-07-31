@@ -7,7 +7,8 @@ from openpyxl.styles import Font, Alignment, Border, Side
 from openpyxl.utils import get_column_letter
 
 from patient_parser import patient_parser, LOW_CONFIDENCE_THRESHOLD
-from config_surgeons import SURGEON_5, SURGEON_7, SURGEON_MA, FORBIDDEN_MA, pick_ma_surgeon
+from config_surgeons import pick_ma_surgeon
+import config_surgeons
 from constants import WEEKDAYS_RU, WEEKDAYS_FULL
 from room_rules import (
     classify_calendar_title,
@@ -238,18 +239,23 @@ class OperationPlanGenerator:
         self.surname_counts = Counter(surnames)
 
     def assign_surgeons(self):
+        # Читаем актуальные значения из модуля (после surgeons.save в UI).
+        surgeon_5_map = config_surgeons.SURGEON_5
+        surgeon_7 = config_surgeons.SURGEON_7
+        surgeon_ma_map = config_surgeons.SURGEON_MA
+        forbidden = config_surgeons.FORBIDDEN_MA
         surgeon_schedule = defaultdict(lambda: defaultdict(list))
         for day in range(5):
             blocks = self.daily_blocks[day]
-            surgeon_5 = SURGEON_5[day]
+            surgeon_5 = surgeon_5_map[day]
             for p in blocks["5"]:
                 p['surgeon'] = surgeon_5
                 surgeon_schedule[day][surgeon_5].append('5')
             for p in blocks["7"]:
-                p['surgeon'] = SURGEON_7
-                surgeon_schedule[day][SURGEON_7].append('7')
+                p['surgeon'] = surgeon_7
+                surgeon_schedule[day][surgeon_7].append('7')
             ma_surgeon = pick_ma_surgeon(
-                day, SURGEON_5, SURGEON_7, SURGEON_MA, FORBIDDEN_MA
+                day, surgeon_5_map, surgeon_7, surgeon_ma_map, forbidden
             )
             for p in blocks["MA"]:
                 p['surgeon'] = ma_surgeon
@@ -350,8 +356,8 @@ class OperationPlanGenerator:
                     current_row += 1
                 current_row += 1
 
-            add_block("5", self.daily_blocks[day].get("5", []), "ЭТН", SURGEON_5[day])
-            add_block("7", self.daily_blocks[day].get("7", []), "М/А", SURGEON_7)
+            add_block("5", self.daily_blocks[day].get("5", []), "ЭТН", config_surgeons.SURGEON_5[day])
+            add_block("7", self.daily_blocks[day].get("7", []), "М/А", config_surgeons.SURGEON_7)
             ma_patients = self.daily_blocks[day].get("MA", [])
             ma_surgeon = ma_patients[0]['surgeon'] if ma_patients else None
             add_block("М/А", ma_patients, "М/А", ma_surgeon)

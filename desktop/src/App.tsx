@@ -4,13 +4,16 @@ import { SurgeonsDialog } from './components/SurgeonsDialog';
 import { WeekDialog } from './components/WeekDialog';
 import { CalendarsDialog, type CalendarsData } from './components/CalendarsDialog';
 import { SetupWizard, type SetupStatus } from './components/SetupWizard';
+import { UpdateDialog, INSTALL_STEPS, type UpdateInfo } from './components/UpdateDialog';
 import { PhonesDialog, type PhoneFormat } from './components/PhonesDialog';
-import { Modal } from './components/Modal';
 import './App.css';
 
 type LogLine = { text: string; tag: string };
 type Theme = 'dark' | 'light';
 type GenStep = 'idle' | 'parse' | 'distribute' | 'excel' | 'done';
+
+const LOG_MAX = 320;
+const LOG_KEEP = 240;
 
 type CalendarStatus = {
   configured: boolean;
@@ -80,17 +83,30 @@ export default function App() {
     forbidden_ma: string[];
     roster: string[];
   } | null>(null);
-  const [updateInfo, setUpdateInfo] = useState<{
-    current: string;
-    latest: string | null;
-    update_available: boolean;
-    html_url?: string;
-    error?: string;
-    can_install?: boolean;
-  } | null>(null);
+  const [updateInfo, setUpdateInfo] = useState<UpdateInfo | null>(null);
+  const [updateInstalling, setUpdateInstalling] = useState(false);
+  const [updateInstallError, setUpdateInstallError] = useState<string | null>(null);
+  const [updateInstallLog, setUpdateInstallLog] = useState<LogLine[]>([]);
+  const [updateStepIndex, setUpdateStepIndex] = useState(0);
 
   const pushLog = useCallback((message: string, tag = 'info') => {
-    setLogs((prev) => [...prev.slice(-400), { text: `[${nowStamp()}] ${message}`, tag }]);
+    const line = { text: `[${nowStamp()}] ${message}`, tag };
+    setLogs((prev) => {
+      const next = [...prev, line];
+      return next.length > LOG_MAX ? next.slice(-LOG_KEEP) : next;
+    });
+  }, []);
+
+  const pushUpdateLog = useCallback((message: string, tag = 'info') => {
+    const line = { text: `[${nowStamp()}] ${message}`, tag };
+    setUpdateInstallLog((prev) => {
+      const next = [...prev, line];
+      return next.length > 80 ? next.slice(-60) : next;
+    });
+    setLogs((prev) => {
+      const next = [...prev, line];
+      return next.length > LOG_MAX ? next.slice(-LOG_KEEP) : next;
+    });
   }, []);
 
   const pushError = useCallback(
@@ -106,8 +122,16 @@ export default function App() {
 
   useEffect(() => {
     const box = logBoxRef.current;
-    if (box) box.scrollTop = box.scrollHeight;
-    else logEndRef.current?.scrollIntoView({ block: 'end' });
+    if (!box) {
+      logEndRef.current?.scrollIntoView({ block: 'end' });
+      return;
+    }
+    // Двойной rAF — после layout, чтобы всегда уезжать вниз.
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        box.scrollTop = box.scrollHeight;
+      });
+    });
   }, [logs]);
 
   const refreshCalendar = useCallback(async () => {
@@ -140,9 +164,11 @@ export default function App() {
         await refreshCalendar();
         const setup = await rpc<SetupStatus>('setup.status');
         if (!cancelled && !setup.configured) setSetupOpen(setup);
-        const tail = await rpc<{ lines: LogLine[] }>('log.tail', { lines: 80 });
+        const tail = await rpc<{ lines: LogLine[] }>('log.tail', { lines: 200 });
         if (!cancelled && tail.lines?.length) {
-          setLogs(tail.lines.map((l) => ({ text: l.text, tag: l.tag })));
+          const cleaned =
+            tail.lines.length > LOG_MAX ? tail.lines.slice(-LOG_KEEP) : tail.lines;
+          setLogs(cleaned.map((l) => ({ text: l.text, tag: l.tag || 'info' })));
         }
         pushLog('Готов к работе.', 'success');
       } catch (e) {
@@ -305,20 +331,87 @@ export default function App() {
 
   async function onCheckUpdates() {
     setBusy(true);
+    setUpdateInstallError(null);
+    setUpdateInstallLog([]);
+    setUpdateStepIndex(0);
+    setUpdateInstalling(false);
+    pushLog('Проверка обновлений на GitHub…', 'info');
     try {
-      setUpdateInfo(
-        await rpc<{
-          current: string;
-          latest: string | null;
-          update_available: boolean;
-          html_url?: string;
-          error?: string;
-          can_install?: boolean;
-        }>('updates.check'),
-      );
+      const info = await rpc<UpdateInfo>('updates.check');
+      setUpdateInfo(info);
+      if (info.error) {
+        pushLog(`Обновления: ${info.error}`, 'error');
+      } else if (info.update_available) {
+        pushLog(
+          `Доступна версия v${info.latest} (сейчас v${info.current}).`,
+          'success',
+        );
+      } else {
+        pushLog(`Актуальная версия v${info.current}.`, 'success');
+      }
     } catch (e) {
       pushError(e);
     } finally {
+      setBusy(false);
+    }
+  }
+
+  async function onInstallUpdate() {
+    if (!updateInfo) return;
+    setBusy(true);
+    setUpdateInstalling(true);
+    setUpdateInstallError(null);
+    setUpdateInstallLog([]);
+    setUpdateStepIndex(0);
+
+    let step = 0;
+    const advance = (msg: string, tag = 'info') => {
+      setUpdateStepIndex(step);
+      pushUpdateLog(msg, tag);
+      step = Math.min(step + 1, INSTALL_STEPS.length - 1);
+    };
+
+    const ticker = window.setInterval(() => {
+      setUpdateStepIndex((i) => Math.min(i + 1, INSTALL_STEPS.length - 2));
+    }, 2800);
+
+    try {
+      advance('Запрос данных релиза…');
+      advance('Скачивание PlanOperaciy-Windows.zip…');
+      pushUpdateLog('Ожидание ответа backend (SHA-256, установка)…', 'info');
+
+      const res = await rpc<{
+        ok: boolean;
+        error?: string;
+        restarting?: boolean;
+        sha256?: string;
+      }>('updates.install');
+
+      window.clearInterval(ticker);
+
+      if (!res.ok) {
+        setUpdateStepIndex((i) => i);
+        setUpdateInstallError(res.error || 'Ошибка установки обновления');
+        pushUpdateLog(res.error || 'Ошибка установки обновления', 'error');
+        setUpdateInstalling(false);
+        return;
+      }
+
+      setUpdateStepIndex(INSTALL_STEPS.length - 2);
+      if (res.sha256) {
+        pushUpdateLog(`SHA-256 OK: ${res.sha256.slice(0, 16)}…`, 'success');
+      }
+      pushUpdateLog('Установщик запущен. Перезапуск…', 'success');
+      setUpdateStepIndex(INSTALL_STEPS.length - 1);
+      await api().quitAfterUpdate();
+    } catch (e) {
+      window.clearInterval(ticker);
+      const text = e instanceof Error ? e.message : String(e);
+      setUpdateInstallError(text);
+      pushUpdateLog(text, 'error');
+      setUpdateInstalling(false);
+    } finally {
+      window.clearInterval(ticker);
       setBusy(false);
     }
   }
@@ -338,32 +431,6 @@ export default function App() {
         'success',
       );
       await api().openPath(out.replace(/[/\\][^/\\]+$/, ''));
-    } catch (e) {
-      pushError(e);
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function onInstallUpdate() {
-    if (
-      !window.confirm(
-        'Скачать и установить обновление?\nАрхив будет проверен по SHA-256. Приложение перезапустится.',
-      )
-    ) {
-      return;
-    }
-    setBusy(true);
-    try {
-      const res = await rpc<{ ok: boolean; error?: string; restarting?: boolean }>(
-        'updates.install',
-      );
-      if (!res.ok) {
-        pushLog(res.error || 'Ошибка установки обновления', 'error');
-        return;
-      }
-      pushLog('Обновление проверено (SHA-256). Перезапуск…', 'success');
-      await api().quitAfterUpdate();
     } catch (e) {
       pushError(e);
     } finally {
@@ -662,16 +729,37 @@ export default function App() {
         <aside className="app__aside">
           <div className="aside__head">
             <h3 className="aside__title">Журнал</h3>
+            <div className="aside__actions">
+              <span className="aside__meta" title="Строк в журнале (старые удаляются автоматически)">
+                {logs.length}
+              </span>
+              <button
+                type="button"
+                className="btn btn--ghost aside__clear"
+                title="Очистить журнал на экране"
+                disabled={busy || logs.length === 0}
+                onClick={() =>
+                  setLogs([{ text: `[${nowStamp()}] Журнал очищен.`, tag: 'info' }])
+                }
+              >
+                Очистить
+              </button>
+            </div>
           </div>
           <div className="log" ref={logBoxRef}>
-            {logs.map((line, i) => (
-              <p
-                key={`${i}-${line.text.slice(0, 24)}`}
-                className={`log__line log__line--${line.tag || 'info'}`}
-              >
-                {line.text}
-              </p>
-            ))}
+            {logs.length === 0 ? (
+              <p className="log__line log__line--info">Пока пусто — действия появятся здесь.</p>
+            ) : (
+              logs.map((line, i) => (
+                <p
+                  key={`${i}-${line.text.slice(0, 32)}`}
+                  className={`log__line log__line--${line.tag || 'info'}`}
+                >
+                  <span className="log__tag">{(line.tag || 'info').toUpperCase()}</span>
+                  {line.text}
+                </p>
+              ))
+            )}
             <div ref={logEndRef} />
           </div>
         </aside>
@@ -760,42 +848,24 @@ export default function App() {
       ) : null}
 
       {updateInfo ? (
-        <Modal title="Обновления" onClose={() => setUpdateInfo(null)}>
-          <p className="modal__hint">
-            Текущая: v{updateInfo.current}
-            {updateInfo.latest ? ` · GitHub: v${updateInfo.latest}` : ''}
-          </p>
-          {updateInfo.error ? (
-            <p className="status" style={{ color: 'var(--danger)' }}>
-              {updateInfo.error}
-            </p>
-          ) : updateInfo.update_available ? (
-            <p className="status" style={{ color: 'var(--ok)' }}>
-              Доступна новая версия (проверка SHA-256).
-            </p>
-          ) : (
-            <p className="status">У вас актуальная версия.</p>
-          )}
-          <div className="modal__actions">
-            {updateInfo.update_available && updateInfo.can_install ? (
-              <button type="button" className="btn btn--primary" onClick={onInstallUpdate}>
-                Скачать и установить
-              </button>
-            ) : null}
-            {updateInfo.html_url ? (
-              <button
-                type="button"
-                className="btn"
-                onClick={() => api().openExternal(updateInfo.html_url!)}
-              >
-                Открыть релиз
-              </button>
-            ) : null}
-            <button type="button" className="btn btn--ghost" onClick={() => setUpdateInfo(null)}>
-              Закрыть
-            </button>
-          </div>
-        </Modal>
+        <UpdateDialog
+          info={updateInfo}
+          installing={updateInstalling}
+          installError={updateInstallError}
+          installLog={updateInstallLog}
+          activeStepIndex={updateStepIndex}
+          onClose={() => {
+            if (updateInstalling) return;
+            setUpdateInfo(null);
+            setUpdateInstallError(null);
+            setUpdateInstallLog([]);
+            setUpdateStepIndex(0);
+          }}
+          onInstall={onInstallUpdate}
+          onOpenRelease={() => {
+            if (updateInfo.html_url) void api().openExternal(updateInfo.html_url);
+          }}
+        />
       ) : null}
     </div>
   );
