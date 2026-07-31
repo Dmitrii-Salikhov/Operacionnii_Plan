@@ -81,7 +81,11 @@ class PythonBridge {
       stdio: ['pipe', 'pipe', 'pipe'],
     });
 
-    const rl = readline.createInterface({ input: this.proc.stdout });
+    this.proc.stdout.setEncoding('utf8');
+    const rl = readline.createInterface({
+      input: this.proc.stdout,
+      crlfDelay: Infinity,
+    });
     rl.on('line', (line) => this._onLine(line));
 
     this.proc.stderr.on('data', (buf) => {
@@ -146,7 +150,7 @@ class PythonBridge {
           reject(e);
         },
       });
-      this.proc.stdin.write(payload, (err) => {
+      this.proc.stdin.write(Buffer.from(payload, 'utf8'), (err) => {
         if (err) {
           clearTimeout(timer);
           this.pending.delete(id);

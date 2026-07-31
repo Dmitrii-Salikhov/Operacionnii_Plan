@@ -94,6 +94,42 @@ def test_bridge_write_emits_utf8_bytes_with_arrow():
     assert json.loads(buf.data.decode("utf-8"))["result"]["hint"] == "a \u2192 b"
 
 
+def test_iter_request_lines_decodes_utf8_cyrillic_path():
+    """Electron sends UTF-8; must not decode as cp1251 (mojibake paths)."""
+    from bridge import cli
+
+    path = r"C:\Users\SalikhovDmA\Desktop\Салихов Д.А\Календарь\План операций.xlsx"
+    raw_line = (
+        json.dumps(
+            {"id": 7, "method": "plan.export", "params": {"output_path": path}},
+            ensure_ascii=False,
+        )
+        + "\n"
+    ).encode("utf-8")
+
+    class FakeBuf:
+        def __iter__(self):
+            yield raw_line
+
+    class FakeStdin:
+        buffer = FakeBuf()
+
+    import bridge.cli as cli_mod
+
+    old = cli_mod.sys.stdin
+    cli_mod.sys.stdin = FakeStdin()
+    try:
+        lines = list(cli._iter_request_lines())
+    finally:
+        cli_mod.sys.stdin = old
+
+    assert len(lines) == 1
+    req = json.loads(lines[0])
+    assert req["params"]["output_path"] == path
+    # Classic mojibake must not appear
+    assert "РџР»Р°РЅ" not in req["params"]["output_path"]
+
+
 def test_as_day_map_dict_and_list():
     assert handlers._as_day_map({0: "А", "1": "Б"}) == {0: "А", 1: "Б"}
     assert handlers._as_day_map(["X", "Y"]) == {0: "X", 1: "Y"}

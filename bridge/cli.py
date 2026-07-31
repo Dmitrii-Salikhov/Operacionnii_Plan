@@ -69,9 +69,25 @@ def _write(obj: dict) -> None:
     sys.stdout.flush()
 
 
-def main() -> int:
+def _iter_request_lines():
+    """
+    Read RPC lines as UTF-8 bytes.
+
+    On Windows the default stdin encoding is often cp1251/cp1252. Electron
+    sends UTF-8 JSON with Cyrillic paths; decoding as charmap turns
+    «План» into «РџР»Р°РЅ» and open() fails with Errno 2.
+    """
+    buf = getattr(sys.stdin, "buffer", None)
+    if buf is not None:
+        for raw in buf:
+            yield raw.decode("utf-8", errors="replace").strip()
+        return
     for line in sys.stdin:
-        line = line.strip()
+        yield line.strip()
+
+
+def main() -> int:
+    for line in _iter_request_lines():
         if not line:
             continue
         req_id = None

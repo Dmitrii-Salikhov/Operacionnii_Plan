@@ -1,3 +1,8 @@
+## 1.1.3 — Cyrillic paths on Windows
+
+- Исправлено сохранение Excel в папки/имена с кириллицей (`План операций…` вместо `РџР»Р°РЅ…`).
+- Bridge читает stdin как UTF-8; Electron пишет RPC в UTF-8 Buffer.
+
 ## 1.1.2 — Windows UTF-8 bridge
 
 - Исправлена ошибка `'charmap' codec can't encode character '\u2192'` на Windows.

@@ -1,4 +1,4 @@
-# Windows smoke (v1.1.2)
+# Windows smoke (v1.1.3)
 
 Чеклист после CI-артефакта `PlanOperaciy-Windows` / релиза zip:
 
