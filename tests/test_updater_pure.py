@@ -61,6 +61,126 @@ def test_trusted_urls():
     assert not updater.is_trusted_release_page_url("https://evil.example/releases")
 
 
+def test_assert_trusted_http_url_allows_api_and_assets():
+    api = "https://api.github.com/repos/Dmitrii-Salikhov/Operacionnii_Plan/releases/latest"
+    asset = (
+        "https://github.com/Dmitrii-Salikhov/Operacionnii_Plan/releases/download/v1/x.zip"
+    )
+    assert updater._assert_trusted_http_url(api).hostname == "api.github.com"
+    assert updater._assert_trusted_http_url(asset).path.endswith("/x.zip")
+    try:
+        updater._assert_trusted_http_url("http://api.github.com/repos/x")
+        assert False, "expected ValueError for http"
+    except ValueError as e:
+        assert "Untrusted" in str(e)
+    try:
+        updater._assert_trusted_http_url("https://evil.example/file.zip")
+        assert False, "expected ValueError for foreign host"
+    except ValueError as e:
+        assert "Untrusted" in str(e)
+
+
+class _FakeResp:
+    def __init__(self, payload: bytes):
+        self._payload = payload
+        self._pos = 0
+
+    def read(self, size=-1):
+        if self._pos >= len(self._payload):
+            return b""
+        if size is None or size < 0:
+            chunk = self._payload[self._pos :]
+            self._pos = len(self._payload)
+            return chunk
+        chunk = self._payload[self._pos : self._pos + size]
+        self._pos += len(chunk)
+        return chunk
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        return False
+
+
+def test_http_get_and_download_to_file_stream(tmp_path, monkeypatch):
+    logs = []
+    monkeypatch.setattr(updater, "_log", logs.append)
+    asset = (
+        "https://github.com/Dmitrii-Salikhov/Operacionnii_Plan/releases/download/v1/x.zip"
+    )
+    api = "https://api.github.com/repos/Dmitrii-Salikhov/Operacionnii_Plan/releases/latest"
+    payload = b"hello-stream-payload"
+
+    def fake_urlopen(req, timeout=None, context=None):
+        return _FakeResp(payload)
+
+    monkeypatch.setattr(updater.urllib.request, "urlopen", fake_urlopen)
+    assert updater._http_get(api) == payload
+
+    out = tmp_path / "chunk.bin"
+    written = updater._http_download_to_file(asset, str(out), chunk_size=5)
+    assert written == len(payload)
+    assert out.read_bytes() == payload
+    assert any("Скачивание завершено" in m for m in logs)
+
+
+def test_http_download_to_file_rejects_empty_body(tmp_path, monkeypatch):
+    asset = (
+        "https://github.com/Dmitrii-Salikhov/Operacionnii_Plan/releases/download/v1/x.zip"
+    )
+    monkeypatch.setattr(updater, "_log", lambda *_: None)
+    monkeypatch.setattr(
+        updater.urllib.request,
+        "urlopen",
+        lambda *args, **kwargs: _FakeResp(b""),
+    )
+    try:
+        updater._http_download_to_file(asset, str(tmp_path / "empty.bin"), chunk_size=8)
+        assert False, "expected OSError for empty body"
+    except OSError as e:
+        assert "Пустой ответ" in str(e)
+
+
+class _FakeCountingResp:
+    """Стрим заданного размера без удержания всего payload в памяти."""
+
+    def __init__(self, total_size: int):
+        self._left = total_size
+
+    def read(self, size=-1):
+        if self._left <= 0:
+            return b""
+        n = self._left if size is None or size < 0 else min(size, self._left)
+        self._left -= n
+        return b"x" * n
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        return False
+
+
+def test_http_download_to_file_logs_progress_every_25mb(tmp_path, monkeypatch):
+    logs = []
+    monkeypatch.setattr(updater, "_log", logs.append)
+    asset = (
+        "https://github.com/Dmitrii-Salikhov/Operacionnii_Plan/releases/download/v1/x.zip"
+    )
+    total = 25 * 1024 * 1024 + 1
+    monkeypatch.setattr(
+        updater.urllib.request,
+        "urlopen",
+        lambda *args, **kwargs: _FakeCountingResp(total),
+    )
+    out = tmp_path / "big.bin"
+    written = updater._http_download_to_file(asset, str(out), chunk_size=1024 * 1024)
+    assert written == total
+    # Первый прогресс-лог при mb >= 24 (last_logged_mb стартует с -1)
+    assert any("Скачано 24 МБ →" in m for m in logs)
+
+
 def test_fetch_latest_release_and_download_retries_are_network_free(tmp_path, monkeypatch):
     release = {"tag_name": "v2.0.0", "assets": []}
     monkeypatch.setattr(updater, "_http_get", lambda *args, **kwargs: json.dumps(release).encode())
