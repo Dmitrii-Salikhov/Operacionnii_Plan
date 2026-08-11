@@ -117,8 +117,10 @@
   margin: 0;
   padding: 4px 0;
   list-style: none;
+  /* Всегда тёмный фон: портал вне темы, текст принудительно светлый */
   background: #121821;
-  border: 1px solid var(--border);
+  color: #f2f5f8;
+  border: 1px solid #2a3342;
   border-radius: 4px;
   box-shadow: 0 10px 28px rgba(0, 0, 0, 0.45);
 }
@@ -126,13 +128,21 @@
 .suggest__item {
   padding: 6px 10px;
   cursor: pointer;
-  color: var(--text);
+  color: #f2f5f8;
   font-size: 0.85rem;
 }
 
 .suggest__item--active,
 .suggest__item:hover {
-  background: color-mix(in srgb, var(--accent) 22%, transparent);
+  background: #1e3a5f;
+  color: #ffffff;
+}
+
+/* Нативный select в Review — опции тоже светлые на тёмном */
+.table-wrap--review select,
+.table-wrap--review select option {
+  background-color: #121821;
+  color: #f2f5f8;
 }
 
 .tabs {

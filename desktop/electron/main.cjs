@@ -405,7 +405,9 @@ function registerIpc() {
     if (!ALLOWED_RPC.has(name)) {
       throw new Error(`RPC method not allowed: ${name}`);
     }
-    return bridge.rpc(name, params || {});
+    // ZIP Electron-сборки большой: скачивание + SHA-256 легко > 2 мин
+    const timeoutMs = name === 'updates.install' ? 600000 : 120000;
+    return bridge.rpc(name, params || {}, timeoutMs);
   });
 
   ipcMain.handle('bridge:status', async () => {

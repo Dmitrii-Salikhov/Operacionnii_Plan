@@ -98,8 +98,8 @@ def is_trusted_release_page_url(url):
     return path.startswith(f"/{GITHUB_REPO}/releases")
 
 
-def _http_get(url, timeout=15):
-    """GET только с API/ассетов нашего GitHub-репозитория."""
+def _assert_trusted_http_url(url: str) -> urllib.parse.ParseResult:
+    """Проверяет, что URL разрешён для updater (API или ассеты релиза)."""
     try:
         parsed = urllib.parse.urlparse(url)
     except ValueError as e:
@@ -111,9 +111,43 @@ def _http_get(url, timeout=15):
     api_ok = host == "api.github.com" and path.startswith(f"/repos/{GITHUB_REPO}/")
     if not api_ok and not is_trusted_download_url(url):
         raise ValueError(f"Untrusted URL blocked: {url}")
+    return parsed
+
+
+def _http_get(url, timeout=15):
+    """GET только с API/ассетов нашего GitHub-репозитория (в память — для JSON)."""
+    _assert_trusted_http_url(url)
     req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
     with urllib.request.urlopen(req, timeout=timeout, context=_ssl_context()) as resp:
         return resp.read()
+
+
+def _http_download_to_file(url, dest_path, timeout=60, chunk_size=1024 * 1024):
+    """
+    Скачивает файл потоком на диск (не держит весь ZIP в RAM).
+    Для больших Electron-сборок это критично — иначе UI «висит» после начала загрузки.
+    """
+    _assert_trusted_http_url(url)
+    req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
+    written = 0
+    last_logged_mb = -1
+    with urllib.request.urlopen(req, timeout=timeout, context=_ssl_context()) as resp:
+        with open(dest_path, "wb") as out_file:
+            while True:
+                chunk = resp.read(chunk_size)
+                if not chunk:
+                    break
+                out_file.write(chunk)
+                written += len(chunk)
+                mb = written // (1024 * 1024)
+                # Лог каждые 25 МБ, чтобы в update.log было видно прогресс
+                if mb >= last_logged_mb + 25:
+                    last_logged_mb = mb
+                    _log(f"Скачано {mb} МБ → {os.path.basename(dest_path)}")
+    if written == 0:
+        raise OSError(f"Пустой ответ при скачивании: {url}")
+    _log(f"Скачивание завершено: {written // (1024 * 1024)} МБ ({os.path.basename(dest_path)})")
+    return written
 
 
 def fetch_latest_release():
@@ -200,19 +234,19 @@ def compute_sha256(path):
     return digest.hexdigest()
 
 
-def download_with_retries(url, dest_path, max_retries=7, timeout=60):
+def download_with_retries(url, dest_path, max_retries=7, timeout=120):
     """
     Скачивает файл с экспоненциальной задержкой между попытками.
+    Пишет на диск потоком (без загрузки всего архива в RAM).
     Возвращает True в случае успеха, иначе False.
     """
     for attempt in range(1, max_retries + 1):
         try:
-            data = _http_get(url, timeout=timeout)
-            with open(dest_path, "wb") as out_file:
-                out_file.write(data)
+            _http_download_to_file(url, dest_path, timeout=timeout)
             return True
         except (OSError, urllib.error.URLError, TimeoutError, ValueError) as e:
             _log(f"Ошибка скачивания (попытка {attempt}/{max_retries}): {e}")
+            _safe_remove(dest_path)
             if attempt == max_retries:
                 return False
             wait_seconds = 3 * (2 ** (attempt - 1))
@@ -347,6 +381,7 @@ def install_update_headless(app_dir, release=None):
                 "error": "Файл контрольной суммы повреждён или имеет неизвестный формат.",
             }
 
+        _log("Проверка SHA-256 архива…")
         actual = compute_sha256(zip_path)
         if actual != expected:
             _log(f"SHA-256 mismatch: expected={expected}, actual={actual}")

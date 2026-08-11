@@ -69,13 +69,15 @@ def test_fetch_latest_release_and_download_retries_are_network_free(tmp_path, mo
 
     attempts = []
 
-    def get_then_succeed(*args, **kwargs):
+    def download_then_succeed(url, dest_path, timeout=120, chunk_size=1024 * 1024):
         attempts.append(1)
         if len(attempts) == 1:
             raise urllib.error.URLError("temporary")
-        return b"archive"
+        with open(dest_path, "wb") as f:
+            f.write(b"archive")
+        return len(b"archive")
 
-    monkeypatch.setattr(updater, "_http_get", get_then_succeed)
+    monkeypatch.setattr(updater, "_http_download_to_file", download_then_succeed)
     monkeypatch.setattr(updater.time, "sleep", lambda _: None)
     output = tmp_path / "download.zip"
     assert updater.download_with_retries("https://example.test/archive", output, max_retries=2)
@@ -85,6 +87,11 @@ def test_fetch_latest_release_and_download_retries_are_network_free(tmp_path, mo
 def test_fetch_and_download_failures_return_safe_values(tmp_path, monkeypatch):
     monkeypatch.setattr(updater, "_http_get", lambda *args, **kwargs: (_ for _ in ()).throw(urllib.error.URLError("offline")))
     assert updater.fetch_latest_release() is None
+    monkeypatch.setattr(
+        updater,
+        "_http_download_to_file",
+        lambda *args, **kwargs: (_ for _ in ()).throw(urllib.error.URLError("offline")),
+    )
     assert not updater.download_with_retries("https://example.test/archive", tmp_path / "no.zip", max_retries=1)
     removable = tmp_path / "remove-me"
     removable.write_text("x", encoding="utf-8")

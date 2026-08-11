@@ -559,7 +559,11 @@ export default function App() {
     try {
       advance('Запрос данных релиза…');
       advance('Скачивание PlanOperaciy-Windows.zip…');
-      pushUpdateLog('Ожидание ответа backend (SHA-256, установка)…', 'info');
+      pushUpdateLog(
+        'Идёт скачивание и проверка SHA-256 (архив большой, 2–10 мин — это нормально)…',
+        'info',
+      );
+      setUpdateStepIndex(2); // checksum — реальный прогресс внутри одного RPC
 
       const res = await rpc<{
         ok: boolean;
