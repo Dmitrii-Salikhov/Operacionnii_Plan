@@ -5,6 +5,7 @@ export function Modal({
   title,
   hint,
   wide,
+  xl,
   children,
   onClose,
   closeOnBackdrop = true,
@@ -12,10 +13,13 @@ export function Modal({
   title: string;
   hint?: string;
   wide?: boolean;
+  /** Крупное окно (уточнение событий и т.п.) */
+  xl?: boolean;
   children: ReactNode;
   onClose: () => void;
   closeOnBackdrop?: boolean;
 }) {
+  const sizeClass = xl ? ' modal--xl' : wide ? ' modal--wide' : '';
   return (
     <div
       className="modal-backdrop"
@@ -23,7 +27,7 @@ export function Modal({
       role="presentation"
     >
       <div
-        className={`modal${wide ? ' modal--wide' : ''}`}
+        className={`modal${sizeClass}`}
         onClick={(e) => e.stopPropagation()}
         role="dialog"
         aria-modal="true"

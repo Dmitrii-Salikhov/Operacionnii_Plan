@@ -12,6 +12,7 @@ import config_surgeons
 from constants import WEEKDAYS_RU, WEEKDAYS_FULL
 from room_rules import (
     classify_calendar_title,
+    extract_service_notes,
     is_service_event,
     is_tonsillectomy,
 )
@@ -128,15 +129,62 @@ class OperationPlanGenerator:
                 )
                 self.generalochka_days.add(day_idx)
                 continue
+            if event_kind == "service_note":
+                _, note_text = extract_service_notes(title)
+                self.events_by_day[day_idx].append(
+                    {
+                        "type": "service_note",
+                        "text": note_text or title.strip(),
+                        "time": time_str,
+                        "date": dt,
+                    }
+                )
+                self.log(f"Служебная пометка: {title}")
+                continue
             if event_kind == "service":
                 self.log(f"Служебное событие пропущено: {title}")
                 continue
 
-            patient = patient_parser.parse_patient_from_event(title, desc, logger=self.log)
+            cleaned_title, title_notes = extract_service_notes(title)
+            cleaned_desc, desc_notes = extract_service_notes(desc)
+            # Пометки в скобках календаря обычно относятся к «Примечаниям» на Поступлении
+            # (кроме скобок, где внутри есть ключ диагноза — их парсер раскрывает в diagnosis_raw).
+            # Важно: делаем до extract_bound_notes, чтобы парсер не “съел” ключ внутри скобок.
+            bracket_title_notes = patient_parser.extract_bracket_notes(cleaned_title)
+            bracket_desc_notes = patient_parser.extract_bracket_notes(cleaned_desc)
+
+            cleaned_title, bound_title = patient_parser.extract_bound_notes(cleaned_title)
+            cleaned_desc, bound_desc = patient_parser.extract_bound_notes(cleaned_desc)
+            patient = patient_parser.parse_patient_from_event(
+                cleaned_title, cleaned_desc, logger=self.log
+            )
             if patient is None:
                 continue
-            patient['date'] = dt
-            patient['time'] = time_str
+            patient["date"] = dt
+            patient["time"] = time_str
+            notes_parts = [
+                n
+                for n in (
+                    title_notes,
+                    bracket_title_notes,
+                    desc_notes,
+                    bracket_desc_notes,
+                    bound_title,
+                    bound_desc,
+                )
+                if n
+            ]
+            if notes_parts:
+                # без дублей при совпадении title/desc
+                merged: list[str] = []
+                for part in notes_parts:
+                    for piece in part.split("; "):
+                        piece = piece.strip()
+                        if piece and piece not in merged:
+                            merged.append(piece)
+                patient["notes"] = "; ".join(merged)
+            else:
+                patient.setdefault("notes", "")
             self.events_by_day[day_idx].append(patient)
 
     def distribute_patients(self):
@@ -157,7 +205,11 @@ class OperationPlanGenerator:
                         )
                     break
 
-            patients = [p for p in events if 'type' not in p or p.get('type') not in ('narcosis_closed', 'generalochka')]
+            patients = [
+                p
+                for p in events
+                if p.get("type") not in ("narcosis_closed", "generalochka", "service_note")
+            ]
             for p in patients:
                 resolved = patient_parser.resolve_diagnosis(p['diagnosis_raw'])
                 diag, operation = resolved['diagnosis'], resolved['operation']
@@ -174,6 +226,9 @@ class OperationPlanGenerator:
                 p['operation'] = operation
                 p['confidence'] = confidence
                 p['confidence_source'] = resolved['source']
+                note = (resolved.get("note") or "").strip()
+                if note:
+                    self._append_patient_note(p, note)
                 # Низкая уверенность, неизвестный ключ или короткое ФИО → уточнение в GUI
                 if (
                     p.get('is_unknown_diag')
@@ -230,6 +285,8 @@ class OperationPlanGenerator:
 
                 self.daily_blocks[day][op_room].append(p)
 
+            self._attach_day_service_notes(day)
+
         surnames = []
         for d in range(5):
             for room in ["5", "7", "MA"]:
@@ -237,6 +294,68 @@ class OperationPlanGenerator:
                     surname, _ = patient_parser.get_surname_and_initials(p['name'])
                     surnames.append(surname)
         self.surname_counts = Counter(surnames)
+
+    @staticmethod
+    def _time_to_minutes(value):
+        try:
+            tm = parse_time_str(value, default=None)
+        except (TypeError, ValueError):
+            return None
+        if tm is None:
+            return None
+        return tm.hour * 60 + tm.minute
+
+    @staticmethod
+    def _append_patient_note(patient, text: str) -> None:
+        note = (text or "").strip()
+        if not note:
+            return
+        existing = (patient.get("notes") or "").strip()
+        if not existing:
+            patient["notes"] = note
+            return
+        parts = [p.strip() for p in existing.split(";") if p.strip()]
+        if note not in parts:
+            parts.append(note)
+            patient["notes"] = "; ".join(parts)
+
+    def _attach_day_service_notes(self, day: int) -> None:
+        """Отдельные пометки календаря → ближайший пациент того же дня по времени."""
+        notes = [
+            e
+            for e in self.events_by_day.get(day, [])
+            if e.get("type") == "service_note"
+        ]
+        if not notes:
+            return
+        patients = []
+        for room in ("5", "7", "MA"):
+            patients.extend(self.daily_blocks[day][room])
+        if not patients:
+            for note in notes:
+                self.log(
+                    f"Пометка без пациента: {note.get('text')}",
+                    "warning",
+                )
+            return
+        for note in notes:
+            note_mins = self._time_to_minutes(note.get("time"))
+            best = None
+            best_dist = None
+            for p in patients:
+                p_mins = self._time_to_minutes(p.get("time"))
+                if note_mins is None or p_mins is None:
+                    dist = 0 if best is None else 10**9
+                else:
+                    dist = abs(p_mins - note_mins)
+                if best is None or dist < best_dist:
+                    best = p
+                    best_dist = dist
+            if best is None:
+                continue
+            text = note.get("text") or ""
+            self._append_patient_note(best, text)
+            self.log(f"Пометка «{text}» → {best.get('name')}")
 
     def assign_surgeons(self):
         # Читаем актуальные значения из модуля (после surgeons.save в UI).
@@ -429,7 +548,10 @@ class OperationPlanGenerator:
             top=Side(style='thin'), bottom=Side(style='thin')
         )
 
-        adm_headers = ['№ п/п', 'День недели', 'Дата поступления', 'ФИО, возраст', 'Диагноз']
+        adm_headers = [
+            '№ п/п', 'День недели', 'Дата поступления', 'ФИО, возраст', 'Диагноз', 'Примечания'
+        ]
+        notes_header = adm_headers[-1]
         for col, h in enumerate(adm_headers, 1):
             cell = ws_adm.cell(row=1, column=col, value=h)
             cell.font = adm_header_font
@@ -439,8 +561,9 @@ class OperationPlanGenerator:
         ws_adm.column_dimensions['A'].width = 6
         ws_adm.column_dimensions['B'].width = 8
         ws_adm.column_dimensions['C'].width = 14
-        ws_adm.column_dimensions['D'].width = 28
-        ws_adm.column_dimensions['E'].width = 40
+        ws_adm.column_dimensions['D'].width = 26
+        ws_adm.column_dimensions['E'].width = 32
+        ws_adm.column_dimensions['F'].width = len(notes_header) + 1
 
         all_patients = []
         for day in range(5):
@@ -463,7 +586,7 @@ class OperationPlanGenerator:
             age_str = f"{p['age']} {p['age_unit']}" if p['age'] is not None else ""
 
             if prev_adm_day is not None and adm_day_idx != prev_adm_day:
-                for col in range(1, 6):
+                for col in range(1, 7):
                     ws_adm.cell(row=row_adm, column=col).border = Border(top=Side(style='thin'))
             prev_adm_day = adm_day_idx
 
@@ -480,8 +603,15 @@ class OperationPlanGenerator:
             cell_fio.font = adm_data_font
             cell_fio.alignment = Alignment(horizontal='center', vertical='center', wrap_text=True)
 
-            ws_adm.cell(row=row_adm, column=5, value=f"{p['diagnosis']} {p['narc_type']}").font = adm_data_font
-            ws_adm.cell(row=row_adm, column=5).alignment = wrap_align
+            cell_diag = ws_adm.cell(
+                row=row_adm, column=5, value=f"{p['diagnosis']} {p['narc_type']}"
+            )
+            cell_diag.font = small_font
+            cell_diag.alignment = wrap_align
+
+            cell_notes = ws_adm.cell(row=row_adm, column=6, value=p.get("notes") or "")
+            cell_notes.font = small_font
+            cell_notes.alignment = wrap_align
 
             row_adm += 1
 

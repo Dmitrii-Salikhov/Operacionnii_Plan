@@ -1,10 +1,14 @@
-const { app, BrowserWindow, dialog, ipcMain, shell, session } = require('electron');
+const { app, BrowserWindow, dialog, ipcMain, shell, session, Menu } = require('electron');
 const path = require('node:path');
 const fs = require('node:fs');
 const { PythonBridge } = require('./pythonBridge.cjs');
 
 /** @type {BrowserWindow | null} */
 let mainWindow = null;
+/** Renderer subscribed to menu:action (flush early clicks on Windows). */
+let rendererMenuReady = false;
+/** @type {string[]} */
+const pendingMenuActions = [];
 const bridge = new PythonBridge();
 
 /** Paths allowed for shell.openPath (session allowlist). */
@@ -99,6 +103,250 @@ function applyCsp() {
   });
 }
 
+function sendMenuAction(action) {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  if (mainWindow.isMinimized()) mainWindow.restore();
+  mainWindow.show();
+  mainWindow.focus();
+  mainWindow.webContents.focus();
+  const payload = String(action);
+  if (!rendererMenuReady) {
+    pendingMenuActions.push(payload);
+    return;
+  }
+  mainWindow.webContents.send('menu:action', payload);
+}
+
+function flushPendingMenuActions() {
+  if (!mainWindow || mainWindow.isDestroyed() || !rendererMenuReady) return;
+  while (pendingMenuActions.length) {
+    mainWindow.webContents.send('menu:action', pendingMenuActions.shift());
+  }
+}
+
+/** Подпись с мнемоникой Alt+буква для Windows/Linux. */
+function menuLabel(text, letterIndex = 0) {
+  const isWinLinux = process.platform === 'win32' || process.platform === 'linux';
+  if (!isWinLinux || text.includes('&')) return text;
+  const chars = [...text];
+  if (letterIndex < 0 || letterIndex >= chars.length) return text;
+  chars[letterIndex] = `&${chars[letterIndex]}`;
+  return chars.join('');
+}
+
+function buildApplicationMenu() {
+  const isMac = process.platform === 'darwin';
+  const isWin = process.platform === 'win32';
+  const isDev = !!process.env.VITE_DEV_SERVER_URL;
+
+  /** @type {import('electron').MenuItemConstructorOptions[]} */
+  const template = [];
+
+  if (isMac) {
+    template.push({
+      label: app.name,
+      submenu: [
+        {
+          label: 'О программе',
+          click: () => sendMenuAction('about'),
+        },
+        { type: 'separator' },
+        { role: 'services', label: 'Службы' },
+        { type: 'separator' },
+        { role: 'hide', label: 'Скрыть' },
+        { role: 'hideOthers', label: 'Скрыть остальные' },
+        { role: 'unhide', label: 'Показать все' },
+        { type: 'separator' },
+        { role: 'quit', label: 'Выход' },
+      ],
+    });
+  }
+
+  template.push({
+    label: menuLabel('Файл'),
+    submenu: [
+      {
+        label: menuLabel('Открыть Excel…', 0),
+        accelerator: 'CmdOrCtrl+O',
+        click: () => sendMenuAction('open-excel'),
+      },
+      {
+        label: menuLabel('Сформировать план', 0),
+        accelerator: 'CmdOrCtrl+Enter',
+        click: () => sendMenuAction('generate-plan'),
+      },
+      { type: 'separator' },
+      {
+        label: menuLabel('Экспорт словаря…', 0),
+        click: () => sendMenuAction('export-dictionary'),
+      },
+      {
+        label: menuLabel('Импорт словаря…', 0),
+        click: () => sendMenuAction('import-dictionary'),
+      },
+      { type: 'separator' },
+      {
+        label: menuLabel('Выгрузить телефоны…', 0),
+        click: () => sendMenuAction('export-phones'),
+      },
+      { type: 'separator' },
+      ...(isMac
+        ? []
+        : [
+            {
+              role: 'quit',
+              label: menuLabel('Выход', 0),
+            },
+          ]),
+    ],
+  });
+
+  template.push({
+    label: menuLabel('Календарь'),
+    submenu: [
+      {
+        label: menuLabel('Выбрать неделю…', 0),
+        accelerator: 'CmdOrCtrl+Shift+W',
+        click: () => sendMenuAction('pick-week'),
+      },
+      {
+        label: menuLabel('Календари…', 0),
+        click: () => sendMenuAction('calendars'),
+      },
+      {
+        label: menuLabel('Переподключить OAuth', 0),
+        click: () => sendMenuAction('reconnect-oauth'),
+      },
+    ],
+  });
+
+  template.push({
+    label: menuLabel('Настройки'),
+    submenu: [
+      {
+        label: menuLabel('Хирурги…', 0),
+        click: () => sendMenuAction('surgeons'),
+      },
+      {
+        label: menuLabel('Мастер настройки…', 0),
+        click: () => sendMenuAction('setup-wizard'),
+      },
+      { type: 'separator' },
+      {
+        label: menuLabel('Тема оформления', 0),
+        accelerator: 'CmdOrCtrl+Shift+T',
+        click: () => sendMenuAction('toggle-theme'),
+      },
+      {
+        label: 'Список поступлений при экспорте',
+        type: 'checkbox',
+        checked: false,
+        id: 'export-admissions',
+        click: (item) => sendMenuAction(`toggle-admissions:${item.checked}`),
+      },
+    ],
+  });
+
+  template.push({
+    label: menuLabel('Правка'),
+    submenu: [
+      { role: 'undo', label: menuLabel('Отменить', 0) },
+      { role: 'redo', label: menuLabel('Повторить', 0) },
+      { type: 'separator' },
+      { role: 'cut', label: menuLabel('Вырезать', 0) },
+      { role: 'copy', label: menuLabel('Копировать', 0) },
+      { role: 'paste', label: menuLabel('Вставить', 0) },
+      { role: 'selectAll', label: menuLabel('Выделить всё', 0) },
+    ],
+  });
+
+  template.push({
+    label: menuLabel('Вид'),
+    submenu: [
+      { role: 'resetZoom', label: menuLabel('Сбросить масштаб', 0) },
+      { role: 'zoomIn', label: menuLabel('Увеличить', 0) },
+      { role: 'zoomOut', label: menuLabel('Уменьшить', 0) },
+      ...(isDev
+        ? [
+            { type: 'separator' },
+            { role: 'reload', label: menuLabel('Перезагрузить', 0) },
+            { role: 'forceReload', label: 'Перезагрузить принудительно' },
+            { role: 'toggleDevTools', label: 'Инструменты разработчика' },
+          ]
+        : []),
+    ],
+  });
+
+  template.push({
+    label: menuLabel('Журнал'),
+    submenu: [
+      {
+        label: menuLabel('Очистить журнал', 0),
+        accelerator: 'CmdOrCtrl+L',
+        click: () => sendMenuAction('clear-log'),
+      },
+    ],
+  });
+
+  template.push({
+    label: menuLabel('Справка'),
+    submenu: [
+      {
+        label: menuLabel('Проверить обновления', 0),
+        click: () => sendMenuAction('check-updates'),
+      },
+      {
+        label: menuLabel('Открыть папку программы', 0),
+        click: () => sendMenuAction('open-base-dir'),
+      },
+      ...(isMac
+        ? []
+        : [
+            { type: 'separator' },
+            {
+              label: menuLabel('О программе', 0),
+              click: () => sendMenuAction('about'),
+            },
+          ]),
+    ],
+  });
+
+  if (isMac) {
+    template.push({
+      label: menuLabel('Окно'),
+      submenu: [
+        { role: 'minimize', label: menuLabel('Свернуть', 0) },
+        { role: 'zoom', label: menuLabel('Масштабировать', 0) },
+        { type: 'separator' },
+        { role: 'front', label: menuLabel('На передний план', 0) },
+      ],
+    });
+  } else {
+    template.push({
+      label: menuLabel('Окно'),
+      submenu: [
+        { role: 'minimize', label: menuLabel('Свернуть', 0) },
+        { role: 'close', label: menuLabel('Закрыть', 0) },
+      ],
+    });
+  }
+
+  const menu = Menu.buildFromTemplate(template);
+  Menu.setApplicationMenu(menu);
+  if (isWin && mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.setMenuBarVisibility(true);
+    mainWindow.setMenu(menu);
+  }
+  return menu;
+}
+
+function syncExportAdmissionsMenu(checked) {
+  const menu = Menu.getApplicationMenu();
+  if (!menu) return;
+  const item = menu.getMenuItemById('export-admissions');
+  if (item) item.checked = !!checked;
+}
+
 function createWindow() {
   mainWindow = new BrowserWindow({
     width: 920,
@@ -140,7 +388,15 @@ function createWindow() {
 
   mainWindow.on('closed', () => {
     mainWindow = null;
+    rendererMenuReady = false;
+    pendingMenuActions.length = 0;
   });
+
+  if (process.platform === 'win32') {
+    mainWindow.setMenuBarVisibility(true);
+  }
+
+  buildApplicationMenu();
 }
 
 function registerIpc() {
@@ -230,6 +486,17 @@ function registerIpc() {
     await shell.openExternal(String(url));
   });
 
+  ipcMain.handle('app:syncExportAdmissionsMenu', async (_e, checked) => {
+    syncExportAdmissionsMenu(checked);
+    return { ok: true };
+  });
+
+  ipcMain.handle('app:menuReady', async () => {
+    rendererMenuReady = true;
+    flushPendingMenuActions();
+    return { ok: true };
+  });
+
   ipcMain.handle('app:quitAfterUpdate', async () => {
     setTimeout(() => {
       try {
@@ -244,6 +511,9 @@ function registerIpc() {
 }
 
 app.whenReady().then(async () => {
+  if (process.platform === 'darwin') {
+    app.setName('План операций ЛОР');
+  }
   applyCsp();
   registerIpc();
   rememberPath(bridge.projectRoot());
@@ -267,5 +537,7 @@ app.on('before-quit', () => {
 });
 
 app.on('activate', () => {
-  if (BrowserWindow.getAllWindows().length === 0) createWindow();
+  if (BrowserWindow.getAllWindows().length === 0) {
+    createWindow();
+  }
 });

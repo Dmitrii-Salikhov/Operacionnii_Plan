@@ -27,6 +27,13 @@
   width: min(960px, 100%);
 }
 
+.modal--xl {
+  width: min(1180px, 98vw);
+  max-height: min(94vh, 980px);
+  display: flex;
+  flex-direction: column;
+}
+
 .modal h2 {
   margin: 0 0 8px;
   font-size: 1.15rem;
@@ -56,6 +63,12 @@
   border-radius: 6px;
 }
 
+.table-wrap--review {
+  flex: 1 1 auto;
+  min-height: 320px;
+  max-height: min(68vh, 680px);
+}
+
 .table {
   width: 100%;
   border-collapse: collapse;
@@ -76,6 +89,50 @@
   background: #121821;
   color: var(--text-muted);
   font-weight: 600;
+}
+
+.table td.muted {
+  color: var(--text-muted);
+  font-size: 0.85em;
+  max-width: 14rem;
+  word-break: break-word;
+}
+
+.form-error {
+  margin: 8px 0 0;
+  color: var(--danger);
+  font-size: 0.85rem;
+}
+
+.suggest {
+  position: relative;
+  min-width: 8rem;
+}
+
+.suggest__list {
+  position: fixed;
+  z-index: 120;
+  max-height: 260px;
+  overflow: auto;
+  margin: 0;
+  padding: 4px 0;
+  list-style: none;
+  background: #121821;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.45);
+}
+
+.suggest__item {
+  padding: 6px 10px;
+  cursor: pointer;
+  color: var(--text);
+  font-size: 0.85rem;
+}
+
+.suggest__item--active,
+.suggest__item:hover {
+  background: color-mix(in srgb, var(--accent) 22%, transparent);
 }
 
 .tabs {

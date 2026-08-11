@@ -33,6 +33,8 @@ type PrepareResult = {
   reviews: ReviewRow[];
   diagnosis_options: string[];
   operation_options: string[];
+  key_options?: string[];
+  key_entries?: Record<string, { diagnosis?: string; operation?: string; note?: string }>;
   logs: { message: string; tag: string }[];
 };
 
@@ -140,6 +142,184 @@ export default function App() {
     return cal;
   }, []);
 
+  async function onExportDictionary() {
+    try {
+      const path = await api().saveJsonDialog({
+        defaultPath: 'custom_diagnoses.json',
+      });
+      if (!path) return;
+      const res = await rpc<{ count: number }>('diag.export', { path });
+      pushLog(`Экспорт словаря: ${res.count}`, 'success');
+    } catch (e) {
+      pushError(e);
+    }
+  }
+
+  async function onImportDictionary() {
+    try {
+      const path = await api().openJsonDialog();
+      if (!path) return;
+      const res = await rpc<{ count: number }>('diag.import', { path });
+      pushLog(`Импорт словаря: ${res.count}`, 'success');
+    } catch (e) {
+      pushError(e);
+    }
+  }
+
+  async function openSurgeonsDialog() {
+    try {
+      setSurgeons(
+        (await rpc('surgeons.get')) as {
+          surgeon_5: Record<string, string>;
+          surgeon_7: string;
+          surgeon_ma: Record<string, string>;
+          forbidden_ma: string[];
+          roster: string[];
+        },
+      );
+    } catch (e) {
+      pushError(e);
+    }
+  }
+
+  async function openSetupWizard() {
+    try {
+      setSetupOpen(await rpc<SetupStatus>('setup.status'));
+    } catch (e) {
+      pushError(e);
+    }
+  }
+
+  async function openBaseDir() {
+    try {
+      const st = await rpc<SetupStatus>('setup.status');
+      if (st?.base_dir) await api().openPath(st.base_dir);
+    } catch (e) {
+      pushError(e);
+    }
+  }
+
+  function clearJournal() {
+    setLogs([{ text: `[${nowStamp()}] Журнал очищен.`, tag: 'info' }]);
+  }
+
+  async function setExportAdmissionsOption(next: boolean) {
+    setExportAdmissions(next);
+    try {
+      await rpc('config.save', { export_admissions: next });
+      await api().syncExportAdmissionsMenu(next);
+    } catch (e) {
+      pushError(e);
+    }
+  }
+
+  const menuHandlersRef = useRef({
+    busy: false,
+    hasSource: false,
+    version: '?.?.?',
+    onPickExcel,
+    onGenerate,
+    onExportDictionary,
+    onImportDictionary,
+    onExportPhones: () => setPhonesOpen(true),
+    onPickWeek: () => setWeekOpen(true),
+    openCalendarsDialog,
+    onReconnect,
+    openSurgeonsDialog,
+    openSetupWizard,
+    toggleTheme,
+    clearJournal,
+    onCheckUpdates,
+    openBaseDir,
+    setExportAdmissionsOption,
+  });
+
+  menuHandlersRef.current = {
+    busy,
+    hasSource,
+    version,
+    onPickExcel,
+    onGenerate,
+    onExportDictionary,
+    onImportDictionary,
+    onExportPhones: () => setPhonesOpen(true),
+    onPickWeek: () => setWeekOpen(true),
+    openCalendarsDialog,
+    onReconnect,
+    openSurgeonsDialog,
+    openSetupWizard,
+    toggleTheme,
+    clearJournal,
+    onCheckUpdates,
+    openBaseDir,
+    setExportAdmissionsOption,
+  };
+
+  useEffect(() => {
+    const unsub = window.plan?.onMenuAction?.((action) => {
+      const h = menuHandlersRef.current;
+      if (h.busy && action !== 'about' && action !== 'clear-log') return;
+
+      switch (action) {
+        case 'open-excel':
+          void h.onPickExcel();
+          break;
+        case 'generate-plan':
+          if (h.hasSource) void h.onGenerate();
+          break;
+        case 'export-dictionary':
+          void h.onExportDictionary();
+          break;
+        case 'import-dictionary':
+          void h.onImportDictionary();
+          break;
+        case 'export-phones':
+          if (h.hasSource) h.onExportPhones();
+          break;
+        case 'pick-week':
+          h.onPickWeek();
+          break;
+        case 'calendars':
+          void h.openCalendarsDialog();
+          break;
+        case 'reconnect-oauth':
+          void h.onReconnect();
+          break;
+        case 'surgeons':
+          void h.openSurgeonsDialog();
+          break;
+        case 'setup-wizard':
+          void h.openSetupWizard();
+          break;
+        case 'toggle-theme':
+          void h.toggleTheme();
+          break;
+        case 'clear-log':
+          h.clearJournal();
+          break;
+        case 'check-updates':
+          void h.onCheckUpdates();
+          break;
+        case 'open-base-dir':
+          void h.openBaseDir();
+          break;
+        case 'about':
+          window.alert(`План операций ЛОР\nВерсия v${h.version}`);
+          break;
+        default:
+          if (action.startsWith('toggle-admissions:')) {
+            const checked = action.endsWith(':true');
+            void h.setExportAdmissionsOption(checked);
+          }
+          break;
+      }
+    });
+    void window.plan?.menuReady?.();
+    return () => {
+      unsub?.();
+    };
+  }, []);
+
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -156,6 +336,7 @@ export default function App() {
         }>('config.get');
         if (cancelled) return;
         setExportAdmissions(!!cfg.export_admissions);
+        await api().syncExportAdmissionsMenu(!!cfg.export_admissions);
         setLastMonday(cfg.last_monday);
         setVersion(cfg.version || ver);
         const nextTheme: Theme = cfg.ui_appearance === 'Light' ? 'light' : 'dark';
@@ -462,18 +643,7 @@ export default function App() {
                 className="btn"
                 title="Сохранить словарь диагнозов в JSON-файл"
                 disabled={busy}
-                onClick={async () => {
-                  try {
-                    const path = await api().saveJsonDialog({
-                      defaultPath: 'custom_diagnoses.json',
-                    });
-                    if (!path) return;
-                    const res = await rpc<{ count: number }>('diag.export', { path });
-                    pushLog(`Экспорт словаря: ${res.count}`, 'success');
-                  } catch (e) {
-                    pushError(e);
-                  }
-                }}
+                onClick={() => void onExportDictionary()}
               >
                 Экспорт словаря
               </button>
@@ -482,16 +652,7 @@ export default function App() {
                 className="btn"
                 title="Загрузить словарь диагнозов из JSON-файла"
                 disabled={busy}
-                onClick={async () => {
-                  try {
-                    const path = await api().openJsonDialog();
-                    if (!path) return;
-                    const res = await rpc<{ count: number }>('diag.import', { path });
-                    pushLog(`Импорт словаря: ${res.count}`, 'success');
-                  } catch (e) {
-                    pushError(e);
-                  }
-                }}
+                onClick={() => void onImportDictionary()}
               >
                 Импорт
               </button>
@@ -533,21 +694,7 @@ export default function App() {
                 className="btn"
                 title="Настроить хирургов, расписание и ограничения"
                 disabled={busy}
-                onClick={async () => {
-                  try {
-                    setSurgeons(
-                      await rpc('surgeons.get') as {
-                        surgeon_5: Record<string, string>;
-                        surgeon_7: string;
-                        surgeon_ma: Record<string, string>;
-                        forbidden_ma: string[];
-                        roster: string[];
-                      },
-                    );
-                  } catch (e) {
-                    pushError(e);
-                  }
-                }}
+                onClick={() => void openSurgeonsDialog()}
               >
                 Хирурги
               </button>
@@ -578,13 +725,7 @@ export default function App() {
                 className="btn"
                 title="Мастер первой настройки календаря и доступа"
                 disabled={busy}
-                onClick={async () => {
-                  try {
-                    setSetupOpen(await rpc<SetupStatus>('setup.status'));
-                  } catch (e) {
-                    pushError(e);
-                  }
-                }}
+                onClick={() => void openSetupWizard()}
               >
                 Мастер
               </button>
@@ -708,13 +849,7 @@ export default function App() {
                     type="checkbox"
                     checked={exportAdmissions}
                     onChange={async (e) => {
-                      const next = e.target.checked;
-                      setExportAdmissions(next);
-                      try {
-                        await rpc('config.save', { export_admissions: next });
-                      } catch (err) {
-                        pushError(err);
-                      }
+                      await setExportAdmissionsOption(e.target.checked);
                     }}
                   />
                   Также «Список поступлений ЛОР»
@@ -738,9 +873,7 @@ export default function App() {
                 className="btn btn--ghost aside__clear"
                 title="Очистить журнал на экране"
                 disabled={busy || logs.length === 0}
-                onClick={() =>
-                  setLogs([{ text: `[${nowStamp()}] Журнал очищен.`, tag: 'info' }])
-                }
+                onClick={clearJournal}
               >
                 Очистить
               </button>
@@ -823,6 +956,8 @@ export default function App() {
           rows={review.reviews}
           diagnosisOptions={review.diagnosis_options}
           operationOptions={review.operation_options}
+          keyOptions={review.key_options || []}
+          keyEntries={review.key_entries || {}}
           onCancel={() => {
             setReview(null);
             setGenStep('idle');

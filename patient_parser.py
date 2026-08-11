@@ -40,16 +40,35 @@ def _resolve_resource_path(filename: str) -> str:
 
 
 def load_diagnosis_map_from_json(path: str) -> Dict[str, Tuple[str, str]]:
-    """Загружает словарь ключ → (диагноз, операция) из JSON."""
+    """Загружает словарь ключ → (диагноз, операция) из JSON.
+    Допускается 3-й элемент [диагноз, операция, примечание] — примечание игнорируется здесь.
+    """
     with open(path, "r", encoding="utf-8") as f:
         raw = json.load(f)
     result: Dict[str, Tuple[str, str]] = {}
     for key, value in raw.items():
-        if isinstance(value, (list, tuple)) and len(value) == 2:
+        if isinstance(value, (list, tuple)) and len(value) >= 2:
             result[key] = (str(value[0]), str(value[1]))
         else:
             raise ValueError(f"Неверный формат диагноза для ключа '{key}'")
     return result
+
+
+def load_key_notes_from_json(path: str) -> Dict[str, str]:
+    """Извлекает ключ → примечание из записей вида [diag, oper, note]."""
+    if not os.path.exists(path):
+        return {}
+    with open(path, "r", encoding="utf-8") as f:
+        raw = json.load(f)
+    if not isinstance(raw, dict):
+        return {}
+    notes: Dict[str, str] = {}
+    for key, value in raw.items():
+        if isinstance(value, (list, tuple)) and len(value) >= 3:
+            note = str(value[2] or "").strip()
+            if note:
+                notes[str(key)] = note
+    return notes
 
 
 def load_combinations_from_json(path: str) -> List[Dict[str, Any]]:
@@ -108,6 +127,7 @@ class PatientParser:
             self.diagnosis_map = load_diagnosis_map_from_json(path)
 
         self.custom_diag_file = custom_diag_file
+        self.key_notes: Dict[str, str] = {}
         self.load_custom_diagnoses()
         self.sort_keys()
 
@@ -118,33 +138,97 @@ class PatientParser:
         self.aliases = load_aliases_from_json(alias_path)
 
     def load_custom_diagnoses(self):
+        self.key_notes = {}
         if os.path.exists(self.custom_diag_file):
             with open(self.custom_diag_file, "r", encoding="utf-8") as f:
                 custom = json.load(f)
             for key, value in custom.items():
-                if isinstance(value, (list, tuple)) and len(value) == 2:
-                    self.diagnosis_map[key] = (str(value[0]), str(value[1]))
+                if not isinstance(value, (list, tuple)) or len(value) < 2:
+                    continue
+                self.diagnosis_map[key] = (str(value[0]), str(value[1]))
+                if len(value) >= 3:
+                    note = str(value[2] or "").strip()
+                    if note:
+                        self.key_notes[key] = note
 
-    def save_custom_diagnosis(self, key: str, diag: str, operation: str):
+    def save_custom_diagnosis(
+        self, key: str, diag: str, operation: str, note: str = ""
+    ):
         custom = {}
         if os.path.exists(self.custom_diag_file):
             with open(self.custom_diag_file, "r", encoding="utf-8") as f:
                 custom = json.load(f)
-        custom[key] = [diag, operation]
+        note = (note or "").strip()
+        if note:
+            custom[key] = [diag, operation, note]
+            self.key_notes[key] = note
+        else:
+            custom[key] = [diag, operation]
+            self.key_notes.pop(key, None)
         with open(self.custom_diag_file, "w", encoding="utf-8") as f:
             json.dump(custom, f, ensure_ascii=False, indent=2)
         self.diagnosis_map[key] = (diag, operation)
         self.sort_keys()
 
     def save_custom_diagnoses_full(self):
+        payload = {}
+        for k, (diag, oper) in self.diagnosis_map.items():
+            note = (self.key_notes.get(k) or "").strip()
+            payload[k] = [diag, oper, note] if note else [diag, oper]
         with open(self.custom_diag_file, "w", encoding="utf-8") as f:
-            payload = {k: list(v) for k, v in self.diagnosis_map.items()}
             json.dump(payload, f, ensure_ascii=False, indent=2)
 
     def sort_keys(self):
         self.sorted_keys = sorted(
             self.diagnosis_map.keys(), key=lambda k: len(k), reverse=True
         )
+        self.sorted_note_keys = sorted(
+            self.key_notes.keys(), key=lambda k: len(k), reverse=True
+        )
+
+    def get_entry(self, key: str) -> Dict[str, str]:
+        """diag / operation / note для ключа (пустые строки, если нет)."""
+        diag, oper = self.diagnosis_map.get(key, ("", ""))
+        return {
+            "diagnosis": diag,
+            "operation": oper,
+            "note": self.key_notes.get(key, ""),
+        }
+
+    def extract_bound_notes(self, text: str) -> Tuple[str, str]:
+        """
+        Вырезает из текста ключи с привязанным примечанием.
+        Возвращает (очищенный_текст, примечания через «; »).
+        Учитывает вариант без завершающей точки («Н.С.» ↔ «Н.С»).
+        """
+        raw = text or ""
+        if not self.key_notes:
+            return raw, ""
+        found: List[str] = []
+        cleaned = raw
+        for key in self.sorted_note_keys:
+            variants = [key]
+            stripped = key.rstrip(".")
+            if stripped and stripped not in variants:
+                variants.append(stripped)
+            matched_at = -1
+            matched_len = 0
+            for variant in variants:
+                idx = self.find_key_index(cleaned, variant)
+                if idx != -1:
+                    matched_at = idx
+                    matched_len = len(variant)
+                    break
+            if matched_at == -1:
+                continue
+            note = self.key_notes.get(key) or ""
+            if note and note not in found:
+                found.append(note)
+            cleaned = (
+                cleaned[:matched_at] + " " + cleaned[matched_at + matched_len :]
+            ).strip()
+            cleaned = re.sub(r"\s+", " ", cleaned).strip()
+        return cleaned, "; ".join(found)
 
     # ---------- Нормализация / безопасный матч ----------
     def apply_aliases(self, text: str) -> str:
@@ -328,6 +412,55 @@ class PatientParser:
 
         return re.sub(r"\(([^)]+)\)", repl, text)
 
+    def extract_bracket_notes(self, text: str) -> str:
+        """
+        Извлекает пометки из скобок в календаре в формате «(...)».
+
+        Логика:
+        - если внутри скобок есть ключ диагноза (из diagnoses.json) — не считаем это примечанием
+          (такие скобки раскрываются в диагноз парсером)
+        - иначе считаем содержимое примечанием для колонки «Примечания»
+        """
+        raw = text or ""
+        notes: List[str] = []
+
+        # Быстрые исключения, чтобы (дж) / (да) / перенос не дублировались с extract_service_notes.
+        def _normalize_token(s: str) -> str:
+            t = (s or "").strip()
+            if not t:
+                return ""
+            low = t.lower()
+            if low in {"дж", "джабраил", "да", "перенос", "переноса"}:
+                return ""
+            if t.isupper():
+                return t
+            if t[:1].isupper():
+                return t
+            # Делает «санация рта» -> «Санация рта» (остальные слова оставляем как есть по буквам)
+            return t.capitalize()
+
+        for m in re.finditer(r"\(([^)]+)\)", raw):
+            content = (m.group(1) or "").strip()
+            if not content:
+                continue
+
+            # Если внутри скобок есть ключ диагноза — пропускаем.
+            has_diag_key = False
+            for k in self.diagnosis_map:
+                if self.find_key_index(content, k) != -1:
+                    has_diag_key = True
+                    break
+            if has_diag_key:
+                continue
+
+            norm = _normalize_token(content)
+            if not norm:
+                continue
+            if norm not in notes:
+                notes.append(norm)
+
+        return "; ".join(notes)
+
     def parse_patient_from_event(
         self, title: str, description: str, logger=None
     ) -> Optional[Dict[str, Any]]:
@@ -457,6 +590,8 @@ class PatientParser:
                     "operation": oper,
                     "confidence": CONF_KEY,
                     "source": "key",
+                    "matched_key": key,
+                    "note": self.key_notes.get(key, ""),
                 }
 
         # 3) Эвристический fallback — низкая уверенность

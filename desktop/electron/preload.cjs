@@ -11,4 +11,12 @@ contextBridge.exposeInMainWorld('plan', {
   getBridgeStatus: () => ipcRenderer.invoke('bridge:status'),
   quitAfterUpdate: () => ipcRenderer.invoke('app:quitAfterUpdate'),
   openPath: (filePath) => ipcRenderer.invoke('shell:openPath', filePath),
+  syncExportAdmissionsMenu: (checked) =>
+    ipcRenderer.invoke('app:syncExportAdmissionsMenu', checked),
+  menuReady: () => ipcRenderer.invoke('app:menuReady'),
+  onMenuAction: (callback) => {
+    const listener = (_event, action) => callback(String(action));
+    ipcRenderer.on('menu:action', listener);
+    return () => ipcRenderer.removeListener('menu:action', listener);
+  },
 });

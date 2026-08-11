@@ -40,3 +40,5 @@ __pycache__/
 # Служебные файлы macOS
 .DS_Store
 .secrets/
+
+.graft/

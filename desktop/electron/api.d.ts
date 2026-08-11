@@ -9,6 +9,9 @@
   getAppVersion: () => Promise<string>;
   getBridgeStatus: () => Promise<{ ok: boolean; detail?: string }>;
   quitAfterUpdate: () => Promise<{ ok: boolean }>;
+  syncExportAdmissionsMenu: (checked: boolean) => Promise<{ ok: boolean }>;
+  menuReady: () => Promise<{ ok: boolean }>;
+  onMenuAction: (callback: (action: string) => void) => () => void;
 }} PlanApi */
 
 export {};

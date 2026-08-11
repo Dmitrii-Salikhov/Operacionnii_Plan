@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import sys
+import re
 from datetime import date, datetime, timedelta
 from typing import Any, Dict, List, Optional
 
@@ -26,6 +27,7 @@ from patient_parser import patient_parser
 from phone_extractor import extract_phones_from_events
 from plan_core import OperationPlanGenerator, admissions_excel_filename
 import config_surgeons
+from room_rules import save_service_note_alias
 from updater import (
     fetch_latest_release,
     find_release_asset,
@@ -61,19 +63,31 @@ def _parse_monday(value: str) -> date:
     return d
 
 
-def _patient_review_row(p: dict, idx: int) -> dict:
+VALID_ROOMS = frozenset({"5", "7", "MA"})
+ROOM_LABELS = {"5": "5", "7": "7", "MA": "МА"}
+
+
+def _patient_review_row(p: dict, idx: int, room: str) -> dict:
     conf = p.get("confidence")
     reason = []
     if p.get("is_unknown_diag"):
         reason.append("диагноз")
     if p.get("needs_name_review"):
         reason.append("имя")
+    raw = (p.get("diagnosis_raw") or "").strip()
+    source = (p.get("full_text") or raw or "").strip()
+    note = (p.get("notes") or "").strip()
+    if raw and not note:
+        note = patient_parser.key_notes.get(raw, "")
     return {
         "id": idx,
         "name": p.get("name") or "",
-        "diagnosis_raw": p.get("diagnosis_raw") or "",
+        "source_text": source,
+        "diagnosis_raw": raw,
         "diagnosis": p.get("diagnosis") or "",
         "operation": p.get("operation") or "",
+        "note": note,
+        "room": room if room in VALID_ROOMS else "5",
         "confidence": conf,
         "reason": ", ".join(reason) or "—",
         "is_unknown_diag": bool(p.get("is_unknown_diag")),
@@ -87,12 +101,47 @@ def _collect_reviews(gen: OperationPlanGenerator) -> List[dict]:
     for day in range(5):
         for room in ["5", "7", "MA"]:
             for p in gen.daily_blocks[day][room]:
-                if p.get("is_unknown_diag") or p.get("needs_name_review"):
-                    rows.append(_patient_review_row(p, idx))
+                source_text = (p.get("full_text") or "").lower()
+                # Показываем также события с токеном «дж», чтобы пользователь мог
+                # выбрать, как именно он должен преобразоваться в «Примечания».
+                has_dj_token = bool(re.search(r"(?<![а-яёa-z0-9])дж(?![а-яёa-z0-9])", source_text))
+                if p.get("is_unknown_diag") or p.get("needs_name_review") or has_dj_token:
+                    rows.append(_patient_review_row(p, idx, room))
                 # Always assign stable index for apply
                 p["_bridge_id"] = idx
                 idx += 1
     return [r for r in rows]
+
+
+def _apply_review_room_moves(
+    gen: OperationPlanGenerator,
+    by_id: Dict[int, dict],
+    log_cb=None,
+) -> None:
+    """Move patients whose review patch requests a different operating room."""
+    moves: List[tuple] = []
+    for day in range(5):
+        for room in ["5", "7", "MA"]:
+            for p in gen.daily_blocks[day][room]:
+                rid = p.get("_bridge_id")
+                if rid is None or rid not in by_id:
+                    continue
+                target = str(by_id[rid].get("room") or "").strip()
+                if target not in VALID_ROOMS or target == room:
+                    continue
+                moves.append((day, room, target, p))
+
+    for day, from_room, to_room, p in moves:
+        block = gen.daily_blocks[day][from_room]
+        if p in block:
+            block.remove(p)
+        gen.daily_blocks[day][to_room].append(p)
+        if log_cb:
+            name = p.get("name") or "пациент"
+            log_cb(
+                f"{name} → операционная {ROOM_LABELS.get(to_room, to_room)}",
+                "info",
+            )
 
 
 def _diag_options():
@@ -107,7 +156,11 @@ def _diag_options():
         if oper not in seen_o:
             seen_o.add(oper)
             opers.append(oper)
-    return sorted(diags, key=str.lower), sorted(opers, key=str.lower)
+    keys = sorted(patient_parser.diagnosis_map.keys(), key=str.lower)
+    key_entries = {
+        k: patient_parser.get_entry(k) for k in keys
+    }
+    return sorted(diags, key=str.lower), sorted(opers, key=str.lower), keys, key_entries
 
 
 def ping(_params: dict) -> dict:
@@ -271,7 +324,7 @@ def plan_prepare(params: dict) -> dict:
     _SESSION["gen"] = gen
     _SESSION["week_start"] = gen.week_start
     reviews = _collect_reviews(gen)
-    diags, opers = _diag_options()
+    diags, opers, keys, key_entries = _diag_options()
     week_end = gen.week_start + timedelta(days=6)
     default_name = (
         f"План операций за {gen.week_start.strftime('%d.%m.%Y')} - "
@@ -284,6 +337,8 @@ def plan_prepare(params: dict) -> dict:
         "reviews": reviews,
         "diagnosis_options": diags,
         "operation_options": opers,
+        "key_options": keys,
+        "key_entries": key_entries,
         "logs": logs,
     }
 
@@ -300,6 +355,9 @@ def plan_export(params: dict) -> dict:
     reviews = params.get("reviews") or []
     by_id = {int(r["id"]): r for r in reviews if "id" in r}
 
+    placeholder_diag = {"диагноз не указан", ""}
+    placeholder_oper = {"операция не указана", ""}
+
     for day in range(5):
         for room in ["5", "7", "MA"]:
             for p in gen.daily_blocks[day][room]:
@@ -310,16 +368,19 @@ def plan_export(params: dict) -> dict:
                 if "name" in patch and patch["name"]:
                     p["name"] = str(patch["name"]).strip()
                     p["needs_name_review"] = False
+                if "diagnosis_raw" in patch and patch["diagnosis_raw"] is not None:
+                    p["diagnosis_raw"] = str(patch["diagnosis_raw"]).strip()
+                if "operation" in patch and patch["operation"] is not None:
+                    p["operation"] = str(patch["operation"]).strip()
                 if "diagnosis" in patch and patch["diagnosis"]:
                     p["diagnosis"] = str(patch["diagnosis"]).strip()
                     p["is_unknown_diag"] = False
-                    raw = (p.get("diagnosis_raw") or "").strip()
-                    if raw and patch.get("remember"):
-                        patient_parser.save_custom_diagnosis(
-                            raw, p["diagnosis"], str(patch.get("operation") or p.get("operation") or "")
-                        )
-                if "operation" in patch and patch["operation"] is not None:
-                    p["operation"] = str(patch["operation"]).strip()
+                if "note" in patch and patch["note"] is not None:
+                    note = str(patch["note"]).strip()
+                    if note:
+                        p["notes"] = note
+                    elif "notes" not in p:
+                        p["notes"] = ""
 
     logs: List[dict] = []
 
@@ -328,6 +389,48 @@ def plan_export(params: dict) -> dict:
         _logger.info("%s", msg)
 
     gen.log = log_cb
+
+    for day in range(5):
+        for room in ["5", "7", "MA"]:
+            for p in gen.daily_blocks[day][room]:
+                rid = p.get("_bridge_id")
+                if rid is None or rid not in by_id:
+                    continue
+                patch = by_id[rid]
+                if not patch.get("remember"):
+                    continue
+                source_text = (p.get("full_text") or "").lower()
+                has_dj_token = bool(re.search(r"(?<![а-яёa-z0-9])дж(?![а-яёa-z0-9])", source_text))
+                key = (p.get("diagnosis_raw") or "").strip()
+                diag = (p.get("diagnosis") or "").strip()
+                oper = (p.get("operation") or "").strip()
+                note = str(
+                    patch.get("note") if patch.get("note") is not None else p.get("notes") or ""
+                ).strip()
+                if (
+                    key
+                    and diag.lower() not in placeholder_diag
+                    and oper.lower() not in placeholder_oper
+                ):
+                    patient_parser.save_custom_diagnosis(key, diag, oper, note=note)
+                    extra = f", примечание «{note}»" if note else ""
+                    log_cb(f"В парсер: «{key}» → {diag} / {oper}{extra}", "success")
+                else:
+                    log_cb(
+                        f"{p.get('name') or 'событие'}: не сохранено в парсер "
+                        "(нужны ключ, диагноз и операция — можно ввести новые)",
+                        "warning",
+                    )
+
+                # Если в исходном тексте было «дж», сохраняем алиас «дж → выбранное пользователем».
+                # Важно: берём первое значение в строке примечаний (до «;»).
+                if has_dj_token and note:
+                    first = next((x.strip() for x in note.split(";") if x.strip()), "")
+                    if first:
+                        save_service_note_alias("дж", first)
+                        log_cb(f"Алиас пометки: «дж» → «{first}»", "success")
+
+    _apply_review_room_moves(gen, by_id, log_cb)
     gen.assign_surgeons()
     gen.sort_patients_in_rooms()
     gen.generate_excel(output_path)
@@ -420,8 +523,13 @@ def surgeons_save(params: dict) -> dict:
 
 
 def diag_options(_params: dict) -> dict:
-    diags, opers = _diag_options()
-    return {"diagnoses": diags, "operations": opers}
+    diags, opers, keys, key_entries = _diag_options()
+    return {
+        "diagnoses": diags,
+        "operations": opers,
+        "keys": keys,
+        "key_entries": key_entries,
+    }
 
 
 def diag_export(params: dict) -> dict:
@@ -449,11 +557,13 @@ def diag_import(params: dict) -> dict:
         raise RuntimeError("Ожидался JSON-объект.")
     count = 0
     for key, value in data.items():
-        if isinstance(value, (list, tuple)) and len(value) == 2:
-            patient_parser.diagnosis_map[str(key)] = (str(value[0]), str(value[1]))
-            count += 1
-    patient_parser.save_custom_diagnoses_full()
-    patient_parser.sort_keys()
+        if not isinstance(value, (list, tuple)) or len(value) < 2:
+            continue
+        note = str(value[2]).strip() if len(value) >= 3 else ""
+        patient_parser.save_custom_diagnosis(
+            str(key), str(value[0]), str(value[1]), note=note
+        )
+        count += 1
     return {"count": count}
 
 
@@ -461,9 +571,10 @@ def diag_save_one(params: dict) -> dict:
     raw = str(params.get("raw") or "").strip()
     diagnosis = str(params.get("diagnosis") or "").strip()
     operation = str(params.get("operation") or "").strip()
+    note = str(params.get("note") or "").strip()
     if not raw or not diagnosis:
         raise RuntimeError("Нужны исходный текст и диагноз.")
-    patient_parser.save_custom_diagnosis(raw, diagnosis, operation)
+    patient_parser.save_custom_diagnosis(raw, diagnosis, operation, note=note)
     return {"ok": True}
 
 

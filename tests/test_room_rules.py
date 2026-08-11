@@ -28,6 +28,8 @@ def test_narcosis_and_generalochka_classification():
     assert classify_calendar_title("для сотрудников") == "service"
     assert classify_calendar_title("Иванов 7 л Адено") is None
     assert is_service_event("Закрыто  для  наркоза")
+    assert classify_calendar_title("ДА") == "service_note"
+    assert classify_calendar_title("перенос") == "service_note"
 
 
 def test_pick_ma_surgeon_uses_roster_not_hardcoded():
