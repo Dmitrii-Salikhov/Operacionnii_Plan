@@ -7,6 +7,9 @@ from room_rules import (
     is_narcosis_closed,
     is_service_event,
     is_tonsillectomy,
+    extract_service_notes,
+    load_service_note_aliases,
+    save_service_note_alias,
     reload_room_rules,
 )
 
@@ -61,3 +64,26 @@ def test_reload_room_rules_from_defaults(tmp_path):
     assert is_generalochka("генка")
     # Вернуть прод-правила
     reload_room_rules()
+
+
+def test_service_note_aliases_can_override_j_token(tmp_path):
+    # Алиас-словарь кладём в временный файл, чтобы не трогать реальные данные.
+    alias_path = tmp_path / "aliases.json"
+    alias_path.write_text("{}", encoding="utf-8")
+
+    # Загружаем в кеш и проверяем базовое поведение.
+    load_service_note_aliases(str(alias_path))
+    cleaned, notes = extract_service_notes("Иванов (дж) 123")
+    assert notes.strip() == "ДЖ"
+
+    # Переопределяем: что именно должен выдавать токен «дж».
+    save_service_note_alias("дж", "Джабраил", path=str(alias_path))
+    load_service_note_aliases(str(alias_path))
+
+    cleaned2, notes2 = extract_service_notes("Иванов (дж) 123")
+    assert "Джабраил" in notes2
+    assert "ДЖ" not in notes2
+
+    # Откатить алиасы, чтобы другие тесты видели "дефолт".
+    alias_path.write_text("{}", encoding="utf-8")
+    load_service_note_aliases(str(alias_path))

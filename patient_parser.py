@@ -225,7 +225,7 @@ class PatientParser:
             if note and note not in found:
                 found.append(note)
             cleaned = (
-                cleaned[:matched_at] + " " + cleaned[matched_at + matched_len :]
+                cleaned[:matched_at] + " " + cleaned[matched_at + matched_len:]
             ).strip()
             cleaned = re.sub(r"\s+", " ", cleaned).strip()
         return cleaned, "; ".join(found)
@@ -293,7 +293,7 @@ class PatientParser:
                 age = today.year - birth_date.year - (
                     (today.month, today.day) < (birth_date.month, birth_date.day)
                 )
-                clean = text[: m_date.start()] + text[m_date.end() :]
+                clean = text[: m_date.start()] + text[m_date.end():]
                 clean = re.sub(r"\s*г\.?\s*р?\.?\s*$", "", clean).strip()
                 return age, "л", clean
             except ValueError:
@@ -310,10 +310,10 @@ class PatientParser:
                 birth_year = num
                 today = datetime.now()
                 age = today.year - birth_year
-                clean = text[: m.start()] + text[m.end() :]
+                clean = text[: m.start()] + text[m.end():]
                 clean = re.sub(r"\s*г\.?\s*$", "", clean).strip()
                 return age, "л", clean
-            clean = text[: m.start()] + text[m.end() :]
+            clean = text[: m.start()] + text[m.end():]
             clean = re.sub(r"\s\.\s", " ", clean).strip()
             clean = re.sub(r"^\s*\.\s*", "", clean).strip()
             return num, unit, clean.strip()
@@ -323,7 +323,7 @@ class PatientParser:
             birth_year = int(m.group(1))
             today = datetime.now()
             age = today.year - birth_year
-            clean = text[: m.start()] + text[m.end() :]
+            clean = text[: m.start()] + text[m.end():]
             return age, "л", clean.strip()
 
         DIAG_TERMS = [
@@ -335,7 +335,7 @@ class PatientParser:
         m = re.search(pattern, text, re.IGNORECASE)
         if m:
             age = int(m.group(1))
-            clean = text[: m.start()] + text[m.end() :]
+            clean = text[: m.start()] + text[m.end():]
             return age, "л", clean.strip()
         return None, None, text
 

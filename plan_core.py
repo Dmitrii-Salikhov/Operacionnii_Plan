@@ -348,7 +348,7 @@ class OperationPlanGenerator:
                     dist = 0 if best is None else 10**9
                 else:
                     dist = abs(p_mins - note_mins)
-                if best is None or dist < best_dist:
+                if best is None or best_dist is None or dist < best_dist:
                     best = p
                     best_dist = dist
             if best is None:
