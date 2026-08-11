@@ -14,12 +14,15 @@ desktop/node_modules/
 # Excel-файлы с данными пациентов
 *.xlsx
 
-# Конфигурации с реальными именами
+# Конфигурации с реальными именами / секретами (не в git)
 surgeons.json
 custom_diagnoses.json
 app_config.json
 last_path.json
+# ID календарей Google — чувствительные данные, только calendars.example.json в репо
 calendars.json
+service_note_aliases.json
+window_state.json
 
 # Файлы Google-авторизации
 credentials.json

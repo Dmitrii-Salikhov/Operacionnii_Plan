@@ -1,4 +1,4 @@
-const { app, BrowserWindow, dialog, ipcMain, shell, session, Menu } = require('electron');
+const { app, BrowserWindow, dialog, ipcMain, shell, session, Menu, screen } = require('electron');
 const path = require('node:path');
 const fs = require('node:fs');
 const { PythonBridge } = require('./pythonBridge.cjs');
@@ -15,6 +15,12 @@ const bridge = new PythonBridge();
 const allowedOpenPaths = new Set();
 
 const GITHUB_REPO_PATH = '/Dmitrii-Salikhov/Operacionnii_Plan/';
+
+const WINDOW_STATE_FILE = 'window_state.json';
+const DEFAULT_WINDOW = { width: 920, height: 860 };
+const MIN_WINDOW = { width: 720, height: 640 };
+/** @type {ReturnType<typeof setTimeout> | null} */
+let saveWindowTimer = null;
 
 /** Must stay in sync with bridge.handlers.HANDLERS */
 const ALLOWED_RPC = new Set([
@@ -46,6 +52,97 @@ const ALLOWED_RPC = new Set([
 const gotLock = app.requestSingleInstanceLock();
 if (!gotLock) {
   app.quit();
+}
+
+function windowStatePath() {
+  return path.join(bridge.projectRoot(), WINDOW_STATE_FILE);
+}
+
+function loadWindowState() {
+  const fallback = { ...DEFAULT_WINDOW, maximized: false };
+  try {
+    const filePath = windowStatePath();
+    if (!fs.existsSync(filePath)) return fallback;
+    const raw = JSON.parse(fs.readFileSync(filePath, 'utf8'));
+    if (!raw || typeof raw !== 'object') return fallback;
+    const width = Math.max(MIN_WINDOW.width, Math.round(Number(raw.width) || DEFAULT_WINDOW.width));
+    const height = Math.max(
+      MIN_WINDOW.height,
+      Math.round(Number(raw.height) || DEFAULT_WINDOW.height),
+    );
+    const state = {
+      width,
+      height,
+      maximized: !!raw.maximized,
+    };
+    if (Number.isFinite(Number(raw.x)) && Number.isFinite(Number(raw.y))) {
+      state.x = Math.round(Number(raw.x));
+      state.y = Math.round(Number(raw.y));
+    }
+    return sanitizeWindowState(state);
+  } catch {
+    return fallback;
+  }
+}
+
+function sanitizeWindowState(state) {
+  const width = Math.max(MIN_WINDOW.width, Math.round(Number(state.width) || DEFAULT_WINDOW.width));
+  const height = Math.max(
+    MIN_WINDOW.height,
+    Math.round(Number(state.height) || DEFAULT_WINDOW.height),
+  );
+  const out = { width, height, maximized: !!state.maximized };
+  if (!Number.isFinite(state.x) || !Number.isFinite(state.y)) {
+    return out;
+  }
+  try {
+    const displays = screen.getAllDisplays();
+    const visible = displays.some((d) => {
+      const b = d.workArea || d.bounds;
+      return (
+        state.x + width > b.x &&
+        state.x < b.x + b.width &&
+        state.y + height > b.y &&
+        state.y < b.y + b.height
+      );
+    });
+    if (visible) {
+      out.x = Math.round(state.x);
+      out.y = Math.round(state.y);
+    }
+  } catch {
+    // screen ещё не готов — без координат
+  }
+  return out;
+}
+
+function saveWindowState(win) {
+  if (!win || win.isDestroyed()) return;
+  try {
+    const maximized = win.isMaximized();
+    const bounds =
+      maximized && typeof win.getNormalBounds === 'function'
+        ? win.getNormalBounds()
+        : win.getBounds();
+    const payload = {
+      width: Math.max(MIN_WINDOW.width, Math.round(bounds.width)),
+      height: Math.max(MIN_WINDOW.height, Math.round(bounds.height)),
+      x: Math.round(bounds.x),
+      y: Math.round(bounds.y),
+      maximized,
+    };
+    fs.writeFileSync(windowStatePath(), JSON.stringify(payload), 'utf8');
+  } catch {
+    // ignore
+  }
+}
+
+function scheduleSaveWindowState(win) {
+  if (saveWindowTimer) clearTimeout(saveWindowTimer);
+  saveWindowTimer = setTimeout(() => {
+    saveWindowTimer = null;
+    saveWindowState(win);
+  }, 300);
 }
 
 function rememberPath(filePath) {
@@ -348,11 +445,13 @@ function syncExportAdmissionsMenu(checked) {
 }
 
 function createWindow() {
-  mainWindow = new BrowserWindow({
-    width: 920,
-    height: 860,
-    minWidth: 720,
-    minHeight: 640,
+  const saved = loadWindowState();
+  /** @type {import('electron').BrowserWindowConstructorOptions} */
+  const opts = {
+    width: saved.width,
+    height: saved.height,
+    minWidth: MIN_WINDOW.width,
+    minHeight: MIN_WINDOW.height,
     backgroundColor: '#0c0e12',
     title: 'План операций ЛОР',
     webPreferences: {
@@ -363,10 +462,20 @@ function createWindow() {
       webSecurity: true,
     },
     show: false,
-  });
+  };
+  if (Number.isFinite(saved.x) && Number.isFinite(saved.y)) {
+    opts.x = saved.x;
+    opts.y = saved.y;
+  }
+
+  mainWindow = new BrowserWindow(opts);
 
   mainWindow.once('ready-to-show', () => {
-    mainWindow?.show();
+    if (!mainWindow || mainWindow.isDestroyed()) return;
+    if (saved.maximized) {
+      mainWindow.maximize();
+    }
+    mainWindow.show();
   });
 
   const devUrl = process.env.VITE_DEV_SERVER_URL;
@@ -384,6 +493,18 @@ function createWindow() {
       shell.openExternal(url);
     }
     return { action: 'deny' };
+  });
+
+  mainWindow.on('resize', () => scheduleSaveWindowState(mainWindow));
+  mainWindow.on('move', () => scheduleSaveWindowState(mainWindow));
+  mainWindow.on('maximize', () => scheduleSaveWindowState(mainWindow));
+  mainWindow.on('unmaximize', () => scheduleSaveWindowState(mainWindow));
+  mainWindow.on('close', () => {
+    if (saveWindowTimer) {
+      clearTimeout(saveWindowTimer);
+      saveWindowTimer = null;
+    }
+    saveWindowState(mainWindow);
   });
 
   mainWindow.on('closed', () => {

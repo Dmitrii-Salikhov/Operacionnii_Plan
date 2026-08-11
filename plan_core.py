@@ -147,9 +147,8 @@ class OperationPlanGenerator:
 
             cleaned_title, title_notes = extract_service_notes(title)
             cleaned_desc, desc_notes = extract_service_notes(desc)
-            # Пометки в скобках календаря обычно относятся к «Примечаниям» на Поступлении
-            # (кроме скобок, где внутри есть ключ диагноза — их парсер раскрывает в diagnosis_raw).
-            # Важно: делаем до extract_bound_notes, чтобы парсер не “съел” ключ внутри скобок.
+            # Пометки в скобках → notes пациента; в полном плане пишутся на лист «Поступление»,
+            # в отдельном Excel поступлений столбец «Примечания» не выводится.
             bracket_title_notes = patient_parser.extract_bracket_notes(cleaned_title)
             bracket_desc_notes = patient_parser.extract_bracket_notes(cleaned_desc)
 
@@ -481,8 +480,8 @@ class OperationPlanGenerator:
             ma_surgeon = ma_patients[0]['surgeon'] if ma_patients else None
             add_block("М/А", ma_patients, "М/А", ma_surgeon)
 
-        # Лист «Поступление» (перед статистикой)
-        self._write_admission_sheet(wb.create_sheet(title="Поступление"))
+        # Лист «Поступление» (перед статистикой) — с примечаниями
+        self._write_admission_sheet(wb.create_sheet(title="Поступление"), include_notes=True)
 
         # Лист «Статистика»
         ws_stats = wb.create_sheet("Статистика")
@@ -536,8 +535,12 @@ class OperationPlanGenerator:
         wb.save(output_path)
         return True
 
-    def _write_admission_sheet(self, ws_adm):
-        """Заполняет лист «Поступление» (те же данные, что в полном плане)."""
+    def _write_admission_sheet(self, ws_adm, include_notes: bool = True):
+        """
+        Заполняет лист «Поступление».
+        include_notes=True — полный план (колонка «Примечания»).
+        include_notes=False — отдельный файл только с поступлениями (без примечаний).
+        """
         wrap_align = Alignment(horizontal='left', vertical='top', wrap_text=True)
         center_align = Alignment(horizontal='center', vertical='center', wrap_text=True)
         adm_header_font = Font(bold=True, size=11, name='Calibri')
@@ -549,9 +552,10 @@ class OperationPlanGenerator:
         )
 
         adm_headers = [
-            '№ п/п', 'День недели', 'Дата поступления', 'ФИО, возраст', 'Диагноз', 'Примечания'
+            '№ п/п', 'День недели', 'Дата поступления', 'ФИО, возраст', 'Диагноз'
         ]
-        notes_header = adm_headers[-1]
+        if include_notes:
+            adm_headers.append('Примечания')
         for col, h in enumerate(adm_headers, 1):
             cell = ws_adm.cell(row=1, column=col, value=h)
             cell.font = adm_header_font
@@ -563,7 +567,8 @@ class OperationPlanGenerator:
         ws_adm.column_dimensions['C'].width = 14
         ws_adm.column_dimensions['D'].width = 26
         ws_adm.column_dimensions['E'].width = 32
-        ws_adm.column_dimensions['F'].width = len(notes_header) + 1
+        if include_notes:
+            ws_adm.column_dimensions['F'].width = len('Примечания') + 1
 
         all_patients = []
         for day in range(5):
@@ -573,6 +578,7 @@ class OperationPlanGenerator:
                     p['narc_type'] = narc_type
                     all_patients.append(p)
 
+        col_count = len(adm_headers)
         prev_adm_day = None
         row_adm = 2
         for idx, p in enumerate(all_patients, 1):
@@ -586,7 +592,7 @@ class OperationPlanGenerator:
             age_str = f"{p['age']} {p['age_unit']}" if p['age'] is not None else ""
 
             if prev_adm_day is not None and adm_day_idx != prev_adm_day:
-                for col in range(1, 7):
+                for col in range(1, col_count + 1):
                     ws_adm.cell(row=row_adm, column=col).border = Border(top=Side(style='thin'))
             prev_adm_day = adm_day_idx
 
@@ -609,9 +615,10 @@ class OperationPlanGenerator:
             cell_diag.font = small_font
             cell_diag.alignment = wrap_align
 
-            cell_notes = ws_adm.cell(row=row_adm, column=6, value=p.get("notes") or "")
-            cell_notes.font = small_font
-            cell_notes.alignment = wrap_align
+            if include_notes:
+                cell_notes = ws_adm.cell(row=row_adm, column=6, value=p.get("notes") or "")
+                cell_notes.font = small_font
+                cell_notes.alignment = wrap_align
 
             row_adm += 1
 
@@ -627,12 +634,12 @@ class OperationPlanGenerator:
         ws_adm.page_margins.bottom = 0.5
 
     def generate_admissions_excel(self, output_path):
-        """Отдельный Excel только с листом «Поступление»."""
+        """Отдельный Excel только с листом «Поступление» (без столбца «Примечания»)."""
         if self.week_start is None:
             raise ValueError("Не определена дата начала недели")
         wb = Workbook()
         ws = wb.active
         ws.title = "Поступление"
-        self._write_admission_sheet(ws)
+        self._write_admission_sheet(ws, include_notes=False)
         wb.save(output_path)
         return True

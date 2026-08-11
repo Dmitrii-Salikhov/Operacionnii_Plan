@@ -87,7 +87,7 @@ def test_standalone_note_attaches_to_nearest_patient():
     assert "Джабраил" not in sidorov.get("notes", "")
 
 
-def test_admission_sheet_has_notes_column_and_diag_font_10(tmp_path):
+def test_admission_sheet_standalone_has_no_notes_column(tmp_path):
     gen = OperationPlanGenerator(
         events_data=[
             event("Иванов 30 септо ДА", "10:00"),
@@ -102,11 +102,29 @@ def test_admission_sheet_has_notes_column_and_diag_font_10(tmp_path):
     gen.generate_admissions_excel(out)
     ws = load_workbook(out)["Поступление"]
     assert ws["E1"].value == "Диагноз"
-    assert ws["F1"].value == "Примечания"
+    assert ws["F1"].value is None  # отдельный файл — без «Примечания»
     assert ws["E2"].font.size == 10
-    notes = ws["F2"].value or ""
-    assert "ДА" in notes
-    assert "Перенос" in notes
+    patients = gen.daily_blocks[0]["5"]
+    assert any("ДА" in (p.get("notes") or "") for p in patients)
+
+
+def test_full_plan_admission_sheet_has_notes(tmp_path):
+    gen = OperationPlanGenerator(
+        events_data=[event("Иванов 30 септо Джабраил", "10:00")]
+    )
+    gen.parse_all_events()
+    gen.distribute_patients()
+    gen.assign_surgeons()
+    gen.sort_patients_in_rooms()
+    out = tmp_path / "plan.xlsx"
+    gen.generate_excel(out)
+    ws = load_workbook(out)["Понедельник"]
+    assert ws["H3"].value == "Примечания"
+    assert not (ws["H4"].value or "").strip()
+    # в полном плане на листе «Поступление» примечания есть
+    adm = load_workbook(out)["Поступление"]
+    assert adm["F1"].value == "Примечания"
+    assert "Джабраил" in (adm["F2"].value or "")
 
 
 def test_weekday_sheet_notes_stay_empty(tmp_path):
@@ -122,9 +140,6 @@ def test_weekday_sheet_notes_stay_empty(tmp_path):
     ws = load_workbook(out)["Понедельник"]
     assert ws["H3"].value == "Примечания"
     assert not (ws["H4"].value or "").strip()
-    # но на Поступлении примечание есть
-    adm = load_workbook(out)["Поступление"]
-    assert "Джабраил" in (adm["F2"].value or "")
 
 
 def test_bracket_notes_without_diag_key_land_on_patient(tmp_path):
